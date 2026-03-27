@@ -1,24 +1,17 @@
-//
-//  ContentView.swift
-//  valoreal
-//
-//  Created by Sitanshu Singh on 3/22/26.
-//
-
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var dataManager = VLRDataManager()
+    
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        TabView {
+            GamesListView()
+                .environmentObject(dataManager)
+                .tabItem {
+                    Label("Games", systemImage: "calendar")
+                }
         }
-        .padding()
+        // Colors the active tab icon purple
+        .tint(Color(red: 0.4, green: 0.2, blue: 0.9))
     }
-}
-
-#Preview {
-    ContentView()
 }

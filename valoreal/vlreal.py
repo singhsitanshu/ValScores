@@ -3,9 +3,10 @@ from bs4 import BeautifulSoup
 import time
 from datetime import datetime
 import json
+import re
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
-from database_setup import Match, Game, PlayerStat, Base
+from .database_setup import Match, Game, PlayerStat, DATABASE_URL
 
 
 class VlrScraper:
@@ -16,14 +17,21 @@ class VlrScraper:
         self.base_url = "https://www.vlr.gg"
 
     def get_matches(self):
-        url = f"{self.base_url}/matches"
-        response = requests.get(url, headers=self.headers)
+        return self._get_match_list("/matches")
+
+    def get_results(self):
+        return self._get_match_list("/matches/results", status_override="Finished")
+
+    def _get_match_list(self, path, status_override=None):
+        url = f"{self.base_url}{path}"
+        response = requests.get(url, headers=self.headers, timeout=20)
+        response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
 
         matches = []
-        match_cards = soup.find_all('a', class_='match-item')
+        match_cards = self._match_cards_with_dates(soup)
 
-        for card in match_cards:
+        for card, schedule_date in match_cards:
             match_url = self.base_url + card['href']
 
             teams = card.find_all('div', class_='match-item-vs-team-name')
@@ -39,24 +47,22 @@ class VlrScraper:
 
             if is_live:
                 try:
-                    # 1. Fetch the specific match page to get live round scores
-                    match_page = requests.get(match_url, headers=self.headers)
+                    match_page = requests.get(match_url, headers=self.headers, timeout=20)
                     match_soup = BeautifulSoup(match_page.text, 'html.parser')
-        
-                    # 2. VLR usually puts the live round score in the header for active matches
-                    score_container = match_soup.find('div', class_='js-spoiler')
-        
+
+                    score_container = match_soup.find('div', class_='match-header-vs-score')
                     if score_container:
-                        # Extract the round scores
-                        scores = score_container.find_all('span')
-                        if len(scores) >= 2:
-                            team1_round = scores[0].text.strip()
-                            team2_round = scores[1].text.strip()
+                        score_text = score_container.get_text(" ", strip=True)
+                        score_parts = [part for part in score_text.replace(":", " ").split() if part.isdigit()]
+                        if len(score_parts) >= 2:
+                            team1_round = score_parts[0]
+                            team2_round = score_parts[1]
                 except Exception as e:
                     print(f"Failed to fetch live round score for {match_url}: {e}")
 
             status_div = card.find('div', class_='match-item-status')
-            status = "LIVE" if is_live else (status_div.text.strip() if status_div else "Unknown")
+            status_text = status_div.text.strip() if status_div else "Upcoming"
+            status = status_override or ("LIVE" if is_live else self._normalize_status(status_text))
 
             # 🕒 Raw time string
             match_time_str = card.find('div', class_='match-item-time').text.strip()
@@ -69,15 +75,22 @@ class VlrScraper:
 
             if len(score_divs) >= 2:
                 try:
-                    team1_score = score_divs[0].text.strip()
-                    team2_score = score_divs[1].text.strip()
+                    if len(score_divs) > 2 and not score_divs[1].text.strip().isdigit():
+                        team1_score = score_divs[0].text.strip()
+                        team2_score = score_divs[2].text.strip()
+                    else:
+                        team1_score = score_divs[0].text.strip()
+                        team2_score = score_divs[1].text.strip()
                 except:
                     pass
+
+            scheduled_time = self._combine_date_and_time(schedule_date, match_time_str)
 
             matches.append({
                 'team1': teams[0].text.strip(),
                 'team2': teams[1].text.strip(),
                 'time': match_time_str,
+                'scheduled_time': scheduled_time,
                 'status': status,
                 'is_live': is_live,
                 'team1_score': team1_score,
@@ -89,16 +102,87 @@ class VlrScraper:
 
         return matches
 
+    def _normalize_status(self, status):
+        status_upper = status.upper() if status else ""
+
+        if "LIVE" in status_upper:
+            return "LIVE"
+
+        if "COMPLETED" in status_upper or "FINISHED" in status_upper:
+            return "Finished"
+
+        return "Upcoming"
+
+    def _match_cards_with_dates(self, soup):
+        cards = []
+        current_date = None
+        main_column = soup.select_one("div.col.mod-1")
+
+        if not main_column:
+            return [(card, None) for card in soup.find_all('a', class_='match-item')]
+
+        for child in main_column.children:
+            if getattr(child, "name", None) != "div":
+                continue
+
+            classes = child.get("class", [])
+            if "wf-label" in classes:
+                current_date = child.get_text(" ", strip=True)
+                continue
+
+            if "wf-card" in classes:
+                for card in child.find_all('a', class_='match-item', recursive=False):
+                    cards.append((card, current_date))
+
+        return cards
+
+    def _combine_date_and_time(self, schedule_date, match_time):
+        if not schedule_date or not match_time:
+            return None
+
+        try:
+            clean_date = (
+                schedule_date
+                .replace(" Today", "")
+                .replace(" Yesterday", "")
+                .strip()
+            )
+            date_part = datetime.strptime(clean_date, "%a, %b %d, %Y")
+            time_part = datetime.strptime(match_time.strip(), "%I:%M %p")
+            return datetime(
+                date_part.year,
+                date_part.month,
+                date_part.day,
+                time_part.hour,
+                time_part.minute
+            ).strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+
     def get_match_details(self, match_url):
-        response = requests.get(match_url, headers=self.headers)
+        response = requests.get(match_url, headers=self.headers, timeout=20)
+        response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
 
         match_data = {
             'map_vetoes': [],
             'live_score': {},
             'player_stats': [],
-            'exact_time': None
+            'games': [],
+            'exact_time': None,
+            'team1': None,
+            'team2': None,
+            'status': None
         }
+
+        teams = self._extract_match_header_teams(soup)
+        if len(teams) >= 2:
+            match_data['team1'] = teams[0]
+            match_data['team2'] = teams[1]
+
+        status = self._extract_match_status(soup)
+        if status:
+            match_data['status'] = status
 
         # 🕒 Exact timestamp
         time_div = soup.find('div', class_='moment-tz-convert')
@@ -122,67 +206,303 @@ class VlrScraper:
                     'team2': scores[1].text.strip()
                 }
 
-        # 👤 Player stats
-        stats_container = soup.find('div', class_='vm-stats-game')
-        if stats_container:
-            rows = stats_container.find_all('tr')
-            for row in rows[1:]:
-                cols = row.find_all('td')
-                if len(cols) > 5:
-                    player_name_tag = cols[0].find('div', class_='text-of')
-                    if not player_name_tag:
-                        continue
+        game_nav = self._extract_game_nav(soup)
+        for stats_container in soup.select('div.vm-stats-game[data-game-id]'):
+            game_id = stats_container.get('data-game-id')
+            nav_info = game_nav.get(game_id, {})
+            header_info = self._extract_game_header(stats_container)
+            map_name = header_info.get('map_name') or nav_info.get('map_name') or ("Overall" if game_id == "all" else "Map")
 
-                    deaths = cols[4].find('span', class_='mod-both').text.strip()
-                    kills = cols[3].find('span', class_='mod-both').text.strip()
+            game_data = {
+                'game_id': game_id,
+                'map_number': nav_info.get('map_number'),
+                'map_name': map_name,
+                'team1_round_score': header_info.get('team1_round_score'),
+                'team2_round_score': header_info.get('team2_round_score'),
+                'player_stats': self._extract_player_stats(stats_container)
+            }
+            match_data['games'].append(game_data)
 
-                    kd_ratio = "0.0"
-                    try:
-                        kd_ratio = str(round(int(kills) / int(deaths), 2)) if int(deaths) > 0 else kills
-                    except:
-                        pass
+            if game_id == "all":
+                match_data['player_stats'] = game_data['player_stats']
 
-                    match_data['player_stats'].append({
-                        'player': player_name_tag.text.strip(),
-                        'team': cols[0].find('div', class_='ge-text-light').text.strip(),
-                        'acs': cols[2].find('span', class_='mod-both').text.strip(),
-                        'k_d': kd_ratio,
-                        'adr': cols[8].find('span', class_='mod-both').text.strip() if len(cols) > 8 else "0"
-                    })
+        if not match_data['player_stats'] and match_data['games']:
+            match_data['player_stats'] = match_data['games'][0]['player_stats']
 
         return match_data
 
+    def _extract_match_header_teams(self, soup):
+        selectors = [
+            '.match-header-link-name .wf-title-med',
+            '.match-header-link-name',
+            'a.match-header-link .wf-title-med'
+        ]
+
+        for selector in selectors:
+            names = [
+                node.get_text(" ", strip=True)
+                for node in soup.select(selector)
+                if node.get_text(" ", strip=True)
+            ]
+            if len(names) >= 2:
+                return names[:2]
+
+        return []
+
+    def _extract_match_status(self, soup):
+        note = soup.select_one('.match-header-vs-note')
+        status_text = note.get_text(" ", strip=True) if note else ""
+        status_upper = status_text.upper()
+
+        if "LIVE" in status_upper:
+            return "LIVE"
+        if "FINAL" in status_upper or "FINISHED" in status_upper or "COMPLETED" in status_upper:
+            return "Finished"
+        if "UPCOMING" in status_upper:
+            return "Upcoming"
+
+        return None
+
+    def _extract_game_nav(self, soup):
+        games = {}
+        for item in soup.select('div.vm-stats-gamesnav-item[data-game-id]'):
+            game_id = item.get('data-game-id')
+            if item.get('data-disabled') == "1":
+                continue
+
+            text = item.get_text(" ", strip=True)
+            if game_id == "all":
+                games[game_id] = {
+                    'map_number': 0,
+                    'map_name': "All Maps"
+                }
+                continue
+
+            number_match = re.match(r'(\d+)\s+(.*)', text)
+            games[game_id] = {
+                'map_number': int(number_match.group(1)) if number_match else None,
+                'map_name': number_match.group(2).strip() if number_match else text
+            }
+        return games
+
+    def _extract_game_header(self, stats_container):
+        header = stats_container.find('div', class_='vm-stats-game-header')
+        if not header:
+            return {}
+
+        scores = [score.get_text(" ", strip=True) for score in header.find_all('div', class_='score')]
+        map_div = header.find('div', class_='map')
+        map_name = None
+        if map_div:
+            map_name = map_div.find('span').get_text(" ", strip=True) if map_div.find('span') else map_div.get_text(" ", strip=True)
+
+        return {
+            'map_name': map_name,
+            'team1_round_score': scores[0] if len(scores) > 0 else None,
+            'team2_round_score': scores[1] if len(scores) > 1 else None
+        }
+
+    def _extract_player_stats(self, stats_container):
+        player_stats = []
+        rows = stats_container.find_all('tr')
+        for row in rows[1:]:
+            cols = row.find_all('td')
+            if len(cols) <= 5:
+                continue
+
+            player_name_tag = cols[0].find('div', class_='text-of')
+            if not player_name_tag:
+                continue
+
+            team_tag = cols[0].find('div', class_='ge-text-light')
+            acs = self._stat_value(cols, 3)
+            kills = self._stat_value(cols, 4)
+            deaths = self._stat_value(cols, 5)
+            assists = self._stat_value(cols, 6)
+            plus_minus = self._stat_text(cols, 7)
+            kast = self._stat_text(cols, 8)
+            adr = self._stat_value(cols, 9)
+            first_kills = self._stat_value(cols, 11)
+            first_deaths = self._stat_value(cols, 12)
+
+            kd_ratio = "0.0"
+            try:
+                kd_ratio = str(round(int(kills) / int(deaths), 2)) if int(deaths) > 0 else kills
+            except:
+                pass
+
+            player_stats.append({
+                'player': player_name_tag.text.strip(),
+                'team': team_tag.text.strip() if team_tag else "",
+                'acs': acs,
+                'k_d': kd_ratio,
+                'adr': adr,
+                'kills': kills,
+                'deaths': deaths,
+                'assists': assists,
+                'plus_minus': plus_minus,
+                'kast': kast,
+                'first_kills': first_kills,
+                'first_deaths': first_deaths
+            })
+
+        return player_stats
+
+    def _stat_value(self, cols, index):
+        text = self._stat_text(cols, index)
+        match = re.search(r'-?\d+', text)
+        return match.group(0) if match else "0"
+
+    def _stat_text(self, cols, index):
+        if len(cols) <= index:
+            return "0"
+
+        stat = cols[index].find('span', class_='mod-both')
+        return stat.get_text(" ", strip=True) if stat else cols[index].get_text(" ", strip=True)
+
 
 # 🔌 DB setup
-engine = create_engine('sqlite:///valorant_stats.db')
+engine = create_engine(DATABASE_URL)
 Session = sessionmaker(bind=engine)
+
+
+def canonical_match_id(match_url):
+    path = match_url.replace("https://www.vlr.gg", "")
+    match = re.match(r"^/(\d+)", path)
+    return f"/{match.group(1)}" if match else path
+
+
+def is_placeholder_team(name):
+    return not name or name.strip().upper() == "TBD"
+
+
+def should_replace_team_name(current_name, new_name):
+    return not is_placeholder_team(new_name) and (
+        is_placeholder_team(current_name) or current_name.strip() != new_name.strip()
+    )
+
+
+def has_meaningful_score(team1_score, team2_score):
+    return team1_score is not None and team2_score is not None and not (
+        score_to_int(team1_score) == 0 and score_to_int(team2_score) == 0
+    )
+
+
+def richer_match(existing, candidate):
+    existing_score = has_meaningful_score(existing.team1_series_score, existing.team2_series_score)
+    candidate_score = has_meaningful_score(candidate.team1_series_score, candidate.team2_series_score)
+    if candidate_score != existing_score:
+        return candidate_score
+
+    existing_teams = int(not is_placeholder_team(existing.team1_name)) + int(not is_placeholder_team(existing.team2_name))
+    candidate_teams = int(not is_placeholder_team(candidate.team1_name)) + int(not is_placeholder_team(candidate.team2_name))
+    if candidate_teams != existing_teams:
+        return candidate_teams > existing_teams
+
+    return candidate.id < existing.id
+
+
+def merge_duplicate_match(session, primary, duplicate):
+    if richer_match(duplicate, primary):
+        primary.team1_name = duplicate.team1_name
+        primary.team2_name = duplicate.team2_name
+
+    duplicate_status = (duplicate.status or "").upper()
+    primary_status = (primary.status or "").upper()
+    if "LIVE" in duplicate_status or ("UPCOMING" in primary_status and "UPCOMING" not in duplicate_status):
+        primary.status = duplicate.status
+
+    if duplicate.start_time and not primary.start_time:
+        primary.start_time = duplicate.start_time
+    if duplicate.map_vetoes_raw and not primary.map_vetoes_raw:
+        primary.map_vetoes_raw = duplicate.map_vetoes_raw
+    if has_meaningful_score(duplicate.team1_series_score, duplicate.team2_series_score) and not has_meaningful_score(primary.team1_series_score, primary.team2_series_score):
+        primary.team1_series_score = duplicate.team1_series_score
+        primary.team2_series_score = duplicate.team2_series_score
+
+    for duplicate_game in list(duplicate.games):
+        existing_game = session.query(Game).filter_by(
+            match_id=primary.id,
+            vlr_game_id=duplicate_game.vlr_game_id
+        ).first()
+
+        if not existing_game:
+            duplicate_game.match_id = primary.id
+            continue
+
+        if existing_game.map_name in {"Overall", "Map", "TBD", "N/A"} and duplicate_game.map_name:
+            existing_game.map_name = duplicate_game.map_name
+        if existing_game.team1_round_score == 0 and existing_game.team2_round_score == 0:
+            existing_game.team1_round_score = duplicate_game.team1_round_score
+            existing_game.team2_round_score = duplicate_game.team2_round_score
+        if len(existing_game.player_stats) < len(duplicate_game.player_stats):
+            for stat in list(existing_game.player_stats):
+                session.delete(stat)
+            session.flush()
+            for stat in list(duplicate_game.player_stats):
+                stat.game_id = existing_game.id
+
+        session.delete(duplicate_game)
+
+    session.delete(duplicate)
+
+
+def find_match_for_save(session, canonical_id):
+    matches = (
+        session.query(Match)
+        .filter((Match.vlr_match_id == canonical_id) | (Match.vlr_match_id.like(f"{canonical_id}/%")))
+        .all()
+    )
+    if not matches:
+        return None
+
+    primary = next((match for match in matches if match.vlr_match_id == canonical_id), matches[0])
+    for candidate in matches[1:]:
+        if primary.vlr_match_id != canonical_id and richer_match(primary, candidate):
+            primary = candidate
+
+    for duplicate in matches:
+        if duplicate.id != primary.id:
+            merge_duplicate_match(session, primary, duplicate)
+
+    primary.vlr_match_id = canonical_id
+    session.flush()
+    return primary
 
 
 def save_to_database(match_dict, details_dict):
     session = Session()
     try:
-        match_id_string = match_dict['url'].replace("https://www.vlr.gg", "")
-        db_match = session.query(Match).filter_by(vlr_match_id=match_id_string).first()
+        match_id_string = canonical_match_id(match_dict['url'])
+        db_match = find_match_for_save(session, match_id_string)
 
-        best_time = details_dict.get('exact_time') or match_dict['time']
+        best_time = match_dict.get('scheduled_time') or details_dict.get('exact_time') or match_dict['time']
+        team1_name = details_dict.get('team1') or match_dict.get('team1')
+        team2_name = details_dict.get('team2') or match_dict.get('team2')
+        status = details_dict.get('status') or match_dict['status']
 
         if not db_match:
             db_match = Match(
                 vlr_match_id=match_id_string,
-                team1_name=match_dict['team1'],
-                team2_name=match_dict['team2'],
+                team1_name=team1_name,
+                team2_name=team2_name,
                 start_time=best_time,
-                status=match_dict['status']
+                status=status
             )
             session.add(db_match)
         else:
-            db_match.status = match_dict['status']
+            db_match.status = status
             db_match.start_time = best_time
+            if should_replace_team_name(db_match.team1_name, team1_name):
+                db_match.team1_name = team1_name
+            if should_replace_team_name(db_match.team2_name, team2_name):
+                db_match.team2_name = team2_name
 
         # 🔥 Assign the Round Scores from the dictionary
         db_match.team1_round_score = match_dict.get('team1_round_score', "0")
         db_match.team2_round_score = match_dict.get('team2_round_score', "0")
 
+        status_upper = (status or '').upper()
         # 🔥 PRIORITY: Use card score (best for LIVE)
         if match_dict.get('team1_score') and match_dict.get('team2_score'):
             try:
@@ -199,41 +519,58 @@ def save_to_database(match_dict, details_dict):
             except:
                 pass
 
+        elif "UPCOMING" in status_upper:
+            db_match.team1_series_score = None
+            db_match.team2_series_score = None
+
         if details_dict.get('map_vetoes'):
             db_match.map_vetoes_raw = json.dumps(details_dict['map_vetoes'])
 
         session.flush()
 
-        # 🎮 Ensure game exists
-        db_game = session.query(Game).filter_by(match_id=db_match.id, map_name="Overall").first()
-        if not db_game:
-            db_game = Game(match_id=db_match.id, map_name="Overall")
-            session.add(db_game)
-            session.flush()
+        games = details_dict.get('games') or [{
+            'game_id': 'all',
+            'map_number': 0,
+            'map_name': 'Overall',
+            'team1_round_score': None,
+            'team2_round_score': None,
+            'player_stats': details_dict.get('player_stats', [])
+        }]
 
-        # 👤 Save players
-        for p_data in details_dict.get('player_stats', []):
-            db_player = session.query(PlayerStat).filter_by(
-                game_id=db_game.id,
-                player_name=p_data['player']
-            ).first()
+        if "LIVE" in status_upper:
+            live_map_score = latest_started_map_score(games)
+            if live_map_score:
+                db_match.team1_round_score = live_map_score[0]
+                db_match.team2_round_score = live_map_score[1]
 
-            if not db_player:
-                db_player = PlayerStat(
-                    game_id=db_game.id,
-                    player_name=p_data['player']
-                )
-                session.add(db_player)
+        for game_data in games:
+            game_identifier = game_data.get('game_id') or "all"
 
-            db_player.team_name = p_data['team']
-            db_player.acs = int(p_data['acs']) if p_data['acs'].isdigit() else 0
+            db_game = session.query(Game).filter_by(match_id=db_match.id, vlr_game_id=game_identifier).first()
+            if not db_game and game_identifier == "all":
+                db_game = session.query(Game).filter_by(match_id=db_match.id, map_name="Overall").first()
 
-            try:
-                db_player.kd_ratio = float(p_data.get('k_d', '0'))
-            except:
-                db_player.kd_ratio = 0.0
+            map_name = "Overall" if game_identifier == "all" else game_data.get('map_name', "Map")
+            if not db_game:
+                db_game = Game(match_id=db_match.id, map_name=map_name)
+                session.add(db_game)
+                session.flush()
 
-            db_player.adr = int(p_data.get('adr', '0')) if p_data.get('adr', '0').isdigit() else 0
+            db_game.vlr_game_id = game_identifier
+            db_game.map_number = game_data.get('map_number')
+            db_game.map_name = map_name
+            db_game.team1_round_score = score_to_int(game_data.get('team1_round_score'))
+            db_game.team2_round_score = score_to_int(game_data.get('team2_round_score'))
+
+            save_player_stats(session, db_game, game_data.get('player_stats', []))
+
+        derived_series_score = series_score_from_games(games)
+        if derived_series_score and "LIVE" not in status_upper:
+            db_match.team1_series_score = derived_series_score[0]
+            db_match.team2_series_score = derived_series_score[1]
+
+            if "UPCOMING" in status_upper:
+                db_match.status = "Finished"
 
         session.commit()
         print(f"✅ Saved: {db_match.team1_name} vs {db_match.team2_name} | {db_match.team1_series_score}-{db_match.team2_series_score}")
@@ -243,6 +580,110 @@ def save_to_database(match_dict, details_dict):
         print(f"❌ Error: {e}")
     finally:
         session.close()
+
+
+def score_to_int(score):
+    try:
+        return int(score)
+    except (TypeError, ValueError):
+        return 0
+
+
+def series_score_from_games(games):
+    team1_maps = 0
+    team2_maps = 0
+
+    for game_data in games:
+        if (game_data.get('game_id') or "") == "all":
+            continue
+
+        map_name = (game_data.get('map_name') or "").strip().upper()
+        if map_name in {"", "TBD", "N/A", "OVERALL"}:
+            continue
+
+        team1_score = score_to_int(game_data.get('team1_round_score'))
+        team2_score = score_to_int(game_data.get('team2_round_score'))
+        if team1_score == team2_score:
+            continue
+
+        if team1_score > team2_score:
+            team1_maps += 1
+        else:
+            team2_maps += 1
+
+    if team1_maps == 0 and team2_maps == 0:
+        return None
+
+    return team1_maps, team2_maps
+
+
+def latest_started_map_score(games):
+    started_maps = []
+    for game_data in games:
+        if (game_data.get('game_id') or "") == "all":
+            continue
+
+        map_name = (game_data.get('map_name') or "").strip().upper()
+        if map_name in {"", "TBD", "N/A"}:
+            continue
+
+        team1_score = score_to_int(game_data.get('team1_round_score'))
+        team2_score = score_to_int(game_data.get('team2_round_score'))
+        if team1_score == 0 and team2_score == 0:
+            continue
+
+        started_maps.append((
+            game_data.get('map_number') or 0,
+            str(team1_score),
+            str(team2_score)
+        ))
+
+    if not started_maps:
+        return None
+
+    started_maps.sort(key=lambda item: item[0])
+    return started_maps[-1][1], started_maps[-1][2]
+
+
+def save_player_stats(session, db_game, player_stats):
+    # 👤 Save players
+    seen_player_names = []
+    for p_data in player_stats:
+        seen_player_names.append(p_data['player'])
+        db_player = session.query(PlayerStat).filter_by(
+            game_id=db_game.id,
+            player_name=p_data['player']
+        ).first()
+
+        if not db_player:
+            db_player = PlayerStat(
+                game_id=db_game.id,
+                player_name=p_data['player']
+            )
+            session.add(db_player)
+
+        db_player.team_name = p_data['team']
+        db_player.acs = int(p_data['acs']) if p_data['acs'].isdigit() else 0
+
+        try:
+            db_player.kd_ratio = float(p_data.get('k_d', '0'))
+        except:
+            db_player.kd_ratio = 0.0
+
+        db_player.adr = int(p_data.get('adr', '0')) if p_data.get('adr', '0').isdigit() else 0
+        db_player.kills = int(p_data.get('kills', '0')) if p_data.get('kills', '0').lstrip('-').isdigit() else 0
+        db_player.deaths = int(p_data.get('deaths', '0')) if p_data.get('deaths', '0').lstrip('-').isdigit() else 0
+        db_player.assists = int(p_data.get('assists', '0')) if p_data.get('assists', '0').lstrip('-').isdigit() else 0
+        db_player.plus_minus = p_data.get('plus_minus', "0")
+        db_player.kast = p_data.get('kast', "0%")
+        db_player.first_kills = int(p_data.get('first_kills', '0')) if p_data.get('first_kills', '0').lstrip('-').isdigit() else 0
+        db_player.first_deaths = int(p_data.get('first_deaths', '0')) if p_data.get('first_deaths', '0').lstrip('-').isdigit() else 0
+
+    if seen_player_names:
+        session.query(PlayerStat).filter(
+            PlayerStat.game_id == db_game.id,
+            ~PlayerStat.player_name.in_(seen_player_names)
+        ).delete(synchronize_session=False)
 
 
 if __name__ == "__main__":

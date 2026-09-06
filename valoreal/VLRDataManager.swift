@@ -11,6 +11,7 @@ struct MatchInfo: Codable, Identifiable {
     let time: String
     let date_label: String
     let is_live: Bool
+    let is_finished: Bool
     let team1_round_score: String?
     let team2_round_score: String?
 }
@@ -20,15 +21,15 @@ class VLRDataManager: ObservableObject {
     @Published var filteredMatches: [MatchInfo] = []
     @Published var isLoading = false
 
-    // 🔥 Filter + sort (LIVE first)
+    // Filter + sort: live first, upcoming next, finished last.
     func filterMatches(for dateLabel: String) {
         let matchesForDate = allMatches.filter { $0.date_label == dateLabel }
 
         let liveMatches = matchesForDate.filter { $0.is_live }
-        let nonLiveMatches = matchesForDate.filter { !$0.is_live }
+        let upcomingMatches = matchesForDate.filter { !$0.is_live && !$0.is_finished }
+        let finishedMatches = matchesForDate.filter { $0.is_finished && !$0.is_live }
 
-        // Live matches always first
-        filteredMatches = liveMatches + nonLiveMatches
+        filteredMatches = liveMatches + upcomingMatches + finishedMatches
     }
 
     func fetchTimeline() {
@@ -71,7 +72,7 @@ class VLRDataManager: ObservableObject {
         }.resume()
     }
 
-    func forceRefresh() async {
+    func forceRefresh(for dateLabel: String? = nil) async {
         guard let refreshUrl = URL(string: "http://127.0.0.1:8000/api/matches/refresh") else { return }
         guard let timelineUrl = URL(string: "http://127.0.0.1:8000/api/matches/timeline") else { return }
 
@@ -86,11 +87,16 @@ class VLRDataManager: ObservableObject {
             await MainActor.run {
                 self.allMatches = decodedMatches
 
-                let formatter = DateFormatter()
-                formatter.dateFormat = "MMM d"
-                let todayString = formatter.string(from: Date())
+                let activeDate: String
+                if let dateLabel {
+                    activeDate = dateLabel
+                } else {
+                    let formatter = DateFormatter()
+                    formatter.dateFormat = "MMM d"
+                    activeDate = formatter.string(from: Date())
+                }
 
-                self.filterMatches(for: todayString)
+                self.filterMatches(for: activeDate)
 
                 print("✅ Refreshed with latest data")
             }

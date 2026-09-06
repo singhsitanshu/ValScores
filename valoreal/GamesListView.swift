@@ -29,7 +29,7 @@ struct GamesListView: View {
                         mainContent
                     }
                     .refreshable {
-                        await dataManager.forceRefresh()
+                        await dataManager.forceRefresh(for: selectedDate)
                     }
                 }
             }
@@ -43,7 +43,7 @@ struct GamesListView: View {
         // ⏱ AUTO REFRESH
         .onReceive(refreshTimer) { _ in
             Task {
-                await dataManager.forceRefresh()
+                await dataManager.forceRefresh(for: selectedDate)
             }
         }
         .task {
@@ -64,7 +64,6 @@ struct GamesListView: View {
         .padding(.bottom, 12)
     }
 
-    // Main content area
     @ViewBuilder
     private var mainContent: some View {
         if dataManager.isLoading && dataManager.allMatches.isEmpty {
@@ -78,40 +77,20 @@ struct GamesListView: View {
                 .padding(.top, 50)
                 
         } else {
-            gamesColumns
+            gamesList
         }
     }
     
-    private var gamesColumns: some View {
-        // 🔥 TWO COLUMN LAYOUT
-        HStack(alignment: .top, spacing: 8) {
-            
-            // 🔴 LEFT — LIVE
-            VStack(spacing: 8) {
-                ForEach(dataManager.filteredMatches.filter { $0.is_live }) { match in
-                    // 櫨 FIX: Pass the 'match' object into the GameDetailView
-                    NavigationLink(destination: GameDetailView(match: match)) {
-                        GameCardView(match: match)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color.red, lineWidth: 2)
-                            )
-                    }
-                    .buttonStyle(PlainButtonStyle())
+    private var gamesList: some View {
+        LazyVStack(spacing: 8) {
+            ForEach(dataManager.filteredMatches) { match in
+                NavigationLink(destination: GameDetailView(match: match)) {
+                    GameCardView(match: match)
                 }
-            }
-            
-            // ⚪ RIGHT — NON-LIVE
-            VStack(spacing: 8) {
-                ForEach(dataManager.filteredMatches.filter { !$0.is_live }) { match in
-                    // 櫨 FIX: Pass the 'match' object into the GameDetailView
-                    NavigationLink(destination: GameDetailView(match: match)) {
-                        GameCardView(match: match)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
+                .buttonStyle(PlainButtonStyle())
             }
         }
         .padding(.horizontal)
+        .padding(.bottom, 16)
     }
 }

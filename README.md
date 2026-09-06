@@ -41,3 +41,20 @@ valoreal/valorant_stats.db
 ```
 
 No manual database command or Python source edit is required for a clean checkout.
+
+## Match timestamp contract
+
+- VLR's exact `data-utc-ts` value is preferred and normalized to ISO-8601 UTC.
+- The unauthenticated VLR list page is parsed using its America/Chicago display timezone only as a fallback.
+- `matches.start_time` stores canonical values such as `2026-09-06T13:00:00Z`.
+- Ambiguous legacy values are moved to `matches.legacy_start_time`; they are not guessed or returned as canonical timestamps.
+- The timeline API returns `start_time` as an ISO-8601 UTC string or `null`.
+- Swift decodes `start_time` into `Date` and uses the device's current `Calendar` and timezone for grouping and display.
+
+## Timestamp tests
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -p 'test_*.py' -v
+swiftc -parse-as-library valoreal/MatchTimeContract.swift tests/ValScoresTimeContractTests/MatchTimeContractTests.swift -o /tmp/valscores-time-contract-tests
+/tmp/valscores-time-contract-tests
+```

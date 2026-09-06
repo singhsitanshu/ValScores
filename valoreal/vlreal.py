@@ -1,12 +1,16 @@
 import requests
 from bs4 import BeautifulSoup
 import time
-from datetime import datetime
 import json
 import re
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 from .database_setup import Match, Game, PlayerStat, DATABASE_URL
+from .time_contract import (
+    choose_canonical_match_timestamp,
+    normalize_vlr_utc_timestamp,
+    parse_vlr_schedule_timestamp,
+)
 
 
 class VlrScraper:
@@ -137,27 +141,7 @@ class VlrScraper:
         return cards
 
     def _combine_date_and_time(self, schedule_date, match_time):
-        if not schedule_date or not match_time:
-            return None
-
-        try:
-            clean_date = (
-                schedule_date
-                .replace(" Today", "")
-                .replace(" Yesterday", "")
-                .strip()
-            )
-            date_part = datetime.strptime(clean_date, "%a, %b %d, %Y")
-            time_part = datetime.strptime(match_time.strip(), "%I:%M %p")
-            return datetime(
-                date_part.year,
-                date_part.month,
-                date_part.day,
-                time_part.hour,
-                time_part.minute
-            ).strftime("%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            return None
+        return parse_vlr_schedule_timestamp(schedule_date, match_time)
 
     def get_match_details(self, match_url):
         response = requests.get(match_url, headers=self.headers, timeout=20)
@@ -187,7 +171,7 @@ class VlrScraper:
         # 🕒 Exact timestamp
         time_div = soup.find('div', class_='moment-tz-convert')
         if time_div and time_div.has_attr('data-utc-ts'):
-            match_data['exact_time'] = time_div['data-utc-ts']
+            match_data['exact_time'] = normalize_vlr_utc_timestamp(time_div['data-utc-ts'])
 
         # 🗺️ Map vetoes
         veto_block = soup.find('div', class_='match-header-note')
@@ -414,6 +398,8 @@ def merge_duplicate_match(session, primary, duplicate):
 
     if duplicate.start_time and not primary.start_time:
         primary.start_time = duplicate.start_time
+    if duplicate.legacy_start_time and not primary.legacy_start_time:
+        primary.legacy_start_time = duplicate.legacy_start_time
     if duplicate.map_vetoes_raw and not primary.map_vetoes_raw:
         primary.map_vetoes_raw = duplicate.map_vetoes_raw
     if has_meaningful_score(duplicate.team1_series_score, duplicate.team2_series_score) and not has_meaningful_score(primary.team1_series_score, primary.team2_series_score):
@@ -476,7 +462,11 @@ def save_to_database(match_dict, details_dict):
         match_id_string = canonical_match_id(match_dict['url'])
         db_match = find_match_for_save(session, match_id_string)
 
-        best_time = match_dict.get('scheduled_time') or details_dict.get('exact_time') or match_dict['time']
+        best_time = choose_canonical_match_timestamp(
+            details_dict.get('exact_time'),
+            match_dict.get('scheduled_time'),
+        )
+        legacy_time = None if best_time else match_dict.get('time')
         team1_name = details_dict.get('team1') or match_dict.get('team1')
         team2_name = details_dict.get('team2') or match_dict.get('team2')
         status = details_dict.get('status') or match_dict['status']
@@ -487,12 +477,16 @@ def save_to_database(match_dict, details_dict):
                 team1_name=team1_name,
                 team2_name=team2_name,
                 start_time=best_time,
+                legacy_start_time=legacy_time,
                 status=status
             )
             session.add(db_match)
         else:
             db_match.status = status
-            db_match.start_time = best_time
+            if best_time:
+                db_match.start_time = best_time
+            elif not db_match.start_time and legacy_time and not db_match.legacy_start_time:
+                db_match.legacy_start_time = legacy_time
             if should_replace_team_name(db_match.team1_name, team1_name):
                 db_match.team1_name = team1_name
             if should_replace_team_name(db_match.team2_name, team2_name):

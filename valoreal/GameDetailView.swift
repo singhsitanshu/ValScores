@@ -516,7 +516,7 @@ private struct MatchDetailHeaderView: View {
         }
 
         if isUpcoming {
-            return match.time
+            return match.displayTime
         }
 
         return nil

@@ -2,11 +2,7 @@ import SwiftUI
 import Combine
 
 struct GamesListView: View {
-    @State private var selectedDate: String = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
-        return formatter.string(from: Date())
-    }()
+    @State private var selectedDate = Date()
 
     @EnvironmentObject var dataManager: VLRDataManager
 

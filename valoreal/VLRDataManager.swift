@@ -1,29 +1,16 @@
 import Foundation
 import Combine
 
-struct MatchInfo: Codable, Identifiable {
-    let id: Int
-    let team1: String
-    let team2: String
-    let team1_score: String
-    let team2_score: String
-    let status: String
-    let time: String
-    let date_label: String
-    let is_live: Bool
-    let is_finished: Bool
-    let team1_round_score: String?
-    let team2_round_score: String?
-}
-
 class VLRDataManager: ObservableObject {
     @Published var allMatches: [MatchInfo] = []
     @Published var filteredMatches: [MatchInfo] = []
     @Published var isLoading = false
 
     // Filter + sort: live first, upcoming next, finished last.
-    func filterMatches(for dateLabel: String) {
-        let matchesForDate = allMatches.filter { $0.date_label == dateLabel }
+    func filterMatches(for selectedDate: Date, calendar: Calendar = .autoupdatingCurrent) {
+        let matchesForDate = allMatches.filter {
+            MatchTimeContract.isMatch($0, on: selectedDate, calendar: calendar)
+        }
 
         let liveMatches = matchesForDate.filter { $0.is_live }
         let upcomingMatches = matchesForDate.filter { !$0.is_live && !$0.is_finished }
@@ -51,17 +38,13 @@ class VLRDataManager: ObservableObject {
             }
 
             do {
-                let decodedMatches = try JSONDecoder().decode([MatchInfo].self, from: data)
+                let decodedMatches = try MatchTimeContract.makeDecoder().decode([MatchInfo].self, from: data)
 
                 DispatchQueue.main.async {
                     self.allMatches = decodedMatches
                     self.isLoading = false
 
-                    let formatter = DateFormatter()
-                    formatter.dateFormat = "MMM d"
-                    let todayString = formatter.string(from: Date())
-
-                    self.filterMatches(for: todayString)
+                    self.filterMatches(for: Date())
 
                     print("✅ Loaded \(decodedMatches.count) matches")
                 }
@@ -72,7 +55,7 @@ class VLRDataManager: ObservableObject {
         }.resume()
     }
 
-    func forceRefresh(for dateLabel: String? = nil) async {
+    func forceRefresh(for selectedDate: Date? = nil) async {
         guard let refreshUrl = URL(string: "http://127.0.0.1:8000/api/matches/refresh") else { return }
         guard let timelineUrl = URL(string: "http://127.0.0.1:8000/api/matches/timeline") else { return }
 
@@ -82,21 +65,12 @@ class VLRDataManager: ObservableObject {
 
             print("📥 Fetching updated matches...")
             let (data, _) = try await URLSession.shared.data(from: timelineUrl)
-            let decodedMatches = try JSONDecoder().decode([MatchInfo].self, from: data)
+            let decodedMatches = try MatchTimeContract.makeDecoder().decode([MatchInfo].self, from: data)
 
             await MainActor.run {
                 self.allMatches = decodedMatches
 
-                let activeDate: String
-                if let dateLabel {
-                    activeDate = dateLabel
-                } else {
-                    let formatter = DateFormatter()
-                    formatter.dateFormat = "MMM d"
-                    activeDate = formatter.string(from: Date())
-                }
-
-                self.filterMatches(for: activeDate)
+                self.filterMatches(for: selectedDate ?? Date())
 
                 print("✅ Refreshed with latest data")
             }

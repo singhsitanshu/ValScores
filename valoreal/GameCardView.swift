@@ -34,16 +34,16 @@ struct GameCardView: View {
             return "FINAL"
         }
 
-        return match.time
+        return match.displayTime
     }
 
     private var substatusLabel: String? {
         if match.is_live {
-            return match.time
+            return match.displayTime
         }
 
         if match.is_finished {
-            return match.time.isEmpty ? nil : match.time
+            return match.displayTime
         }
 
         return "Upcoming"

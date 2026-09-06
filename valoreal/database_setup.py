@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, Float, ForeignKey, inspect, text
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy import create_engine
 from pathlib import Path
+from .time_contract import normalize_explicit_utc_timestamp
 
 DB_PATH = Path(__file__).resolve().parent / "valorant_stats.db"
 DATABASE_URL = f"sqlite:///{DB_PATH}"
@@ -19,8 +20,10 @@ class Match(Base):
     team1_round_score = Column(String, nullable=True, default="0")
     team2_round_score = Column(String, nullable=True, default="0")
     
-    # --- CHANGED BACK TO STRING ---
+    # Canonical ISO-8601 UTC timestamp, for example 2026-09-06T13:00:00Z.
     start_time = Column(String)
+    # Preserves pre-contract values that cannot be interpreted safely.
+    legacy_start_time = Column(String, nullable=True)
     
     status = Column(String)
     team1_series_score = Column(Integer, default=0)
@@ -68,6 +71,46 @@ class PlayerStat(Base):
 
 engine = create_engine(DATABASE_URL)
 Base.metadata.create_all(engine)
+
+def migrate_match_time_contract():
+    existing_columns = {column["name"] for column in inspect(engine).get_columns("matches")}
+    if "legacy_start_time" not in existing_columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE matches ADD COLUMN legacy_start_time VARCHAR"))
+
+    with engine.begin() as connection:
+        rows = list(
+            connection.execute(
+                text("SELECT id, start_time, legacy_start_time FROM matches")
+            ).mappings()
+        )
+        for row in rows:
+            original = row["start_time"]
+            if not original:
+                continue
+
+            normalized = normalize_explicit_utc_timestamp(original)
+            if normalized:
+                if normalized != original:
+                    connection.execute(
+                        text("UPDATE matches SET start_time = :start_time WHERE id = :id"),
+                        {"start_time": normalized, "id": row["id"]},
+                    )
+                continue
+
+            connection.execute(
+                text(
+                    "UPDATE matches "
+                    "SET start_time = NULL, legacy_start_time = :legacy_start_time "
+                    "WHERE id = :id"
+                ),
+                {
+                    "legacy_start_time": row["legacy_start_time"] or original,
+                    "id": row["id"],
+                },
+            )
+
+migrate_match_time_contract()
 
 def migrate_player_stats_columns():
     existing_columns = {column["name"] for column in inspect(engine).get_columns("player_stats")}

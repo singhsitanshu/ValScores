@@ -2,13 +2,14 @@ from fastapi import FastAPI, HTTPException, Query
 from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker
 from types import SimpleNamespace
-from datetime import datetime
+from datetime import datetime, timezone
 from .vlreal import VlrScraper, save_to_database
 import time
 import json
 import re
 
 from .database_setup import Match, Game, PlayerStat, DATABASE_URL
+from .time_contract import normalize_explicit_utc_timestamp, parse_utc_datetime
 
 app = FastAPI()
 
@@ -28,14 +29,7 @@ def is_placeholder_team(name):
     return not name or name.strip().upper() == "TBD"
 
 def parse_match_start_time(value):
-    if not value:
-        return None
-
-    normalized = str(value).replace(" ", "T").replace("Z", "+00:00")
-    try:
-        return datetime.fromisoformat(normalized).replace(tzinfo=None)
-    except ValueError:
-        return None
+    return parse_utc_datetime(value)
 
 def has_meaningful_score(team1_score, team2_score):
     return team1_score is not None and team2_score is not None and not (
@@ -256,7 +250,7 @@ def refresh_match_details(match):
     match_dict = {
         "team1": details.get("team1") or match.team1_name,
         "team2": details.get("team2") or match.team2_name,
-        "time": match.start_time or "",
+        "time": match.legacy_start_time or "",
         "scheduled_time": match.start_time,
         "status": details.get("status") or match.status or "Upcoming",
         "is_live": "LIVE" in (match.status or "").upper(),
@@ -280,7 +274,7 @@ def try_refresh_match_details(match):
 def refresh_stale_tbd_matches(limit=12, force=False):
     global _last_stale_tbd_refresh_at
 
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     if (
         not force
         and _last_stale_tbd_refresh_at
@@ -306,6 +300,7 @@ def refresh_stale_tbd_matches(limit=12, force=False):
                     team1_name=match.team1_name,
                     team2_name=match.team2_name,
                     start_time=match.start_time,
+                    legacy_start_time=match.legacy_start_time,
                     status=match.status,
                     team1_series_score=match.team1_series_score,
                     team2_series_score=match.team2_series_score,
@@ -364,25 +359,15 @@ def get_timeline():
 
         matches = sorted(
             matches_by_vlr_id.values(),
-            key=lambda match: (match.start_time or "", match.id)
+            key=lambda match: (
+                parse_match_start_time(match.start_time) is None,
+                parse_match_start_time(match.start_time) or datetime.max.replace(tzinfo=timezone.utc),
+                match.id,
+            ),
         )
         
         result = []
         for match in matches:
-            display_time = "TBD"
-            date_label = "TBD"
-            
-            try:
-                if match.start_time:
-                    # Replace space with T to normalize format
-                    normalized_time = match.start_time.replace(" ", "T")
-                    dt_object = datetime.fromisoformat(normalized_time)
-
-                    display_time = dt_object.strftime("%I:%M %p")
-                    date_label = dt_object.strftime("%b ") + str(dt_object.day)
-            except ValueError:
-                pass
-
             status_upper = match.status.upper() if match.status else ""
             is_live = "LIVE" in status_upper
             is_finished = "FINISHED" in status_upper or "COMPLETED" in status_upper
@@ -416,11 +401,9 @@ def get_timeline():
                 "team1_round_score": match.team1_round_score,
                 "team2_round_score": match.team2_round_score,
                 "status": status,
-                "time": display_time,
-                "date_label": date_label,
+                "start_time": normalize_explicit_utc_timestamp(match.start_time),
                 "is_live": is_live,
                 "is_finished": is_finished
-                 # <--- NEW: Send the date label to Swift!
             })
         return result
     finally:

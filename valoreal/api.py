@@ -1,5 +1,4 @@
 from fastapi import FastAPI, HTTPException, Query
-from sqlalchemy import func
 from sqlalchemy.orm import sessionmaker
 from types import SimpleNamespace
 from datetime import datetime, timezone
@@ -11,19 +10,18 @@ from .vlreal import (
     normalize_match_status,
     save_to_database,
 )
-import time
 import json
 import re
 
 from .database_setup import Match, Game, PlayerStat, engine as database_engine
+from .refresh_service import RefreshInProgressError, RefreshService
 from .time_contract import normalize_explicit_utc_timestamp, parse_utc_datetime
 
 app = FastAPI()
 
 engine = database_engine
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-STALE_TBD_REFRESH_INTERVAL_SECONDS = 300
-_last_stale_tbd_refresh_at = None
+match_refresh_service = RefreshService(session_factory=SessionLocal)
 
 def score_to_string(score):
     return "" if score is None else str(score)
@@ -281,56 +279,6 @@ def try_refresh_match_details(match):
         print(f"Could not refresh details for match {match.id}: {exc}")
         return False
 
-def refresh_stale_tbd_matches(limit=12, force=False):
-    global _last_stale_tbd_refresh_at
-
-    now = datetime.now(timezone.utc)
-    if (
-        not force
-        and _last_stale_tbd_refresh_at
-        and (now - _last_stale_tbd_refresh_at).total_seconds() < STALE_TBD_REFRESH_INTERVAL_SECONDS
-    ):
-        return 0
-
-    session = SessionLocal()
-    try:
-        placeholder_matches = (
-            session.query(Match)
-            .filter((func.upper(Match.team1_name) == "TBD") | (func.upper(Match.team2_name) == "TBD"))
-            .order_by(Match.start_time.desc(), Match.id.desc())
-            .all()
-        )
-        stale_matches = []
-        for match in placeholder_matches:
-            start_time = parse_match_start_time(match.start_time)
-            if start_time and start_time <= now:
-                stale_matches.append(SimpleNamespace(
-                    id=match.id,
-                    vlr_match_id=match.vlr_match_id,
-                    team1_name=match.team1_name,
-                    team2_name=match.team2_name,
-                    start_time=match.start_time,
-                    legacy_start_time=match.legacy_start_time,
-                    status=match.status,
-                    team1_series_score=match.team1_series_score,
-                    team2_series_score=match.team2_series_score,
-                    team1_round_score=match.team1_round_score,
-                    team2_round_score=match.team2_round_score
-                ))
-                if len(stale_matches) >= limit:
-                    break
-    finally:
-        session.close()
-
-    refreshed_count = 0
-    for match in stale_matches:
-        if try_refresh_match_details(match):
-            refreshed_count += 1
-            time.sleep(0.5)
-
-    _last_stale_tbd_refresh_at = now
-    return refreshed_count
-
 def should_refresh_players(match, players):
     if not players:
         return True
@@ -355,8 +303,6 @@ def should_refresh_players(match, players):
 @app.get("/api/matches/timeline")
 def get_timeline():
     """Powers the main Games Timeline view."""
-    refresh_stale_tbd_matches()
-
     session = SessionLocal()
     try:
         rows = session.query(Match).order_by(Match.start_time).all()
@@ -484,47 +430,11 @@ def get_match_stats(match_id: int, game_id: str = Query(default="all")):
 
 @app.get("/api/matches/refresh")
 def force_refresh_matches(limit: int = 50, details_limit: int = 12, results_limit: int = 100):
-    print("Forcing a manual scrape...")
-    scraper = VlrScraper()
-    matches = scraper.get_matches()
-    match_list_failures = list(scraper.last_list_parse_failures)
-    results = scraper.get_results()
-    result_list_failures = list(scraper.last_list_parse_failures)
-
-    saved_count = 0
-    detail_failures = []
-    selected_matches = matches[:limit]
-    selected_results = results[:results_limit]
-    for index, match in enumerate(selected_matches + selected_results):
-        details = {}
-        is_result = index >= len(selected_matches)
-        has_series_score = bool(match.get('team1_score') and match.get('team2_score'))
-        should_fetch_details = match.get('is_live') or index < details_limit or (is_result and not has_series_score)
-
-        if should_fetch_details:
-            try:
-                details = scraper.get_match_details(match['url'])
-                time.sleep(0.5) # Be nice to VLR to avoid rate limits.
-            except Exception as exc:
-                print(f"Could not fetch details for {match['url']}: {exc}")
-                detail_failures.append({
-                    "vlr_match_id": match.get("vlr_match_id"),
-                    "url": match["url"],
-                    "error": str(exc),
-                })
-
-        save_to_database(match, details)
-        saved_count += 1
-
-    tbd_refreshed_count = refresh_stale_tbd_matches(force=True)
-
-    return {
-        "message": "Database successfully updated!",
-        "saved": saved_count,
-        "tbd_refreshed": tbd_refreshed_count,
-        "parse_failures": {
-            "matches": match_list_failures,
-            "results": result_list_failures,
-            "details": detail_failures,
-        },
-    }
+    try:
+        return match_refresh_service.refresh(
+            limit=limit,
+            details_limit=details_limit,
+            results_limit=results_limit,
+        )
+    except RefreshInProgressError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

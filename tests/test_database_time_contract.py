@@ -99,7 +99,6 @@ class DatabaseTimeContractTests(unittest.TestCase):
                 session.commit()
                 session.close()
 
-                api.refresh_stale_tbd_matches = lambda: 0
                 print(json.dumps(api.get_timeline()))
                 """,
             )

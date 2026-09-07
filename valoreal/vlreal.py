@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import warnings
+from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 from sqlalchemy.orm import sessionmaker
 from .database_setup import Match, Game, PlayerStat, engine as database_engine
@@ -48,6 +49,13 @@ class MatchListParseWarning(UserWarning):
 
 class MatchDetailParseError(RuntimeError):
     """Raised when a VLR detail page contains an incompatible stats structure."""
+
+
+@dataclass(frozen=True)
+class PersistenceOutcome:
+    action: str
+    vlr_match_id: str
+    database_id: int
 
 
 def normalize_match_status(value, default=None):
@@ -641,6 +649,12 @@ def should_replace_team_name(current_name, new_name):
     )
 
 
+def richer_team_name(primary_name, fallback_name):
+    if not is_placeholder_team(primary_name):
+        return primary_name
+    return fallback_name
+
+
 def has_meaningful_score(team1_score, team2_score):
     return team1_score is not None and team2_score is not None and not (
         score_to_int(team1_score) == 0 and score_to_int(team2_score) == 0
@@ -750,8 +764,55 @@ def find_match_for_save(session, canonical_id):
     return primary
 
 
-def save_to_database(match_dict, details_dict):
-    session = Session()
+def _match_persistence_state(match):
+    games = []
+    for game in sorted(match.games, key=lambda item: (item.vlr_game_id or "", item.id or 0)):
+        players = tuple(sorted(
+            (
+                player.team_name,
+                player.player_name,
+                player.role,
+                player.acs,
+                player.kd_ratio,
+                player.adr,
+                player.kills,
+                player.deaths,
+                player.assists,
+                player.plus_minus,
+                player.kast,
+                player.first_kills,
+                player.first_deaths,
+            )
+            for player in game.player_stats
+        ))
+        games.append((
+            game.vlr_game_id,
+            game.map_number,
+            game.map_name,
+            game.team1_round_score,
+            game.team2_round_score,
+            players,
+        ))
+
+    return (
+        match.vlr_match_id,
+        match.team1_name,
+        match.team2_name,
+        match.team1_round_score,
+        match.team2_round_score,
+        match.start_time,
+        match.legacy_start_time,
+        normalize_match_status(match.status, MATCH_STATUS_UPCOMING),
+        match.team1_series_score,
+        match.team2_series_score,
+        match.map_vetoes_raw,
+        tuple(games),
+    )
+
+
+def persist_match(match_dict, details_dict, session_factory=None):
+    """Atomically upsert one logical match and report its actual write outcome."""
+    session = (session_factory or Session)()
     try:
         match_id_string = canonical_match_id(
             match_dict.get('vlr_match_id') or match_dict['url']
@@ -759,17 +820,37 @@ def save_to_database(match_dict, details_dict):
         if not match_id_string:
             raise ValueError("A VLR match ID is required")
         db_match = find_match_for_save(session, match_id_string)
+        was_inserted = db_match is None
+        if was_inserted:
+            prior_state = None
+        else:
+            database_id = db_match.id
+            session.expire_all()
+            db_match = session.get(Match, database_id)
+            prior_state = _match_persistence_state(db_match)
 
         best_time = choose_canonical_match_timestamp(
             details_dict.get('exact_time'),
             match_dict.get('scheduled_time'),
         )
         legacy_time = None if best_time else match_dict.get('time')
-        team1_name = details_dict.get('team1') or match_dict.get('team1')
-        team2_name = details_dict.get('team2') or match_dict.get('team2')
-        status = normalize_match_status(
-            details_dict.get('status') or match_dict.get('status'),
-            MATCH_STATUS_UPCOMING,
+        team1_name = richer_team_name(
+            details_dict.get('team1'),
+            match_dict.get('team1'),
+        )
+        team2_name = richer_team_name(
+            details_dict.get('team2'),
+            match_dict.get('team2'),
+        )
+        list_status = normalize_match_status(
+            match_dict.get('status'), MATCH_STATUS_UPCOMING
+        )
+        detail_status = normalize_match_status(details_dict.get('status'))
+        status = (
+            detail_status
+            if detail_status is not None
+            and status_rank(detail_status) >= status_rank(list_status)
+            else list_status
         )
 
         if not db_match:
@@ -861,7 +942,7 @@ def save_to_database(match_dict, details_dict):
             map_name = "Overall" if game_identifier == "all" else game_data.get('map_name', "Map")
             if not db_game:
                 db_game = Game(
-                    match_id=db_match.id,
+                    match=db_match,
                     vlr_game_id=game_identifier,
                     map_name=map_name
                 )
@@ -885,26 +966,62 @@ def save_to_database(match_dict, details_dict):
                 db_game.team2_round_score = incoming_game_scores[1]
             session.flush()
 
-            save_player_stats(session, db_game, game_data.get('player_stats', []))
+            save_player_stats(
+                session,
+                db_game,
+                game_data.get('player_stats', []),
+                authoritative=details_dict.get('stats_status') == 'available',
+            )
 
         derived_series_score = series_score_from_games(games)
-        if derived_series_score and current_status != MATCH_STATUS_LIVE:
+        if (
+            derived_series_score
+            and current_status != MATCH_STATUS_LIVE
+            and not has_meaningful_score(
+                db_match.team1_series_score,
+                db_match.team2_series_score,
+            )
+        ):
             db_match.team1_series_score = derived_series_score[0]
             db_match.team2_series_score = derived_series_score[1]
 
             if current_status == MATCH_STATUS_UPCOMING:
                 db_match.status = MATCH_STATUS_FINISHED
 
+        session.flush()
+        database_id = db_match.id
+        session.expire_all()
+        db_match = session.get(Match, database_id)
+        current_state = _match_persistence_state(db_match)
+        action = (
+            "inserted"
+            if was_inserted
+            else "updated"
+            if current_state != prior_state
+            else "unchanged"
+        )
         session.commit()
-        print(f"✅ Saved: {db_match.team1_name} vs {db_match.team2_name} | {db_match.team1_series_score}-{db_match.team2_series_score}")
-        return True
+        logger.info(
+            "Saved %s vs %s (%s-%s)",
+            db_match.team1_name,
+            db_match.team2_name,
+            db_match.team1_series_score,
+            db_match.team2_series_score,
+        )
+        return PersistenceOutcome(action, match_id_string, database_id)
 
     except Exception as e:
         session.rollback()
-        print(f"❌ Error: {e}")
+        logger.error("Could not persist VLR match: %s", e)
         raise
     finally:
         session.close()
+
+
+def save_to_database(match_dict, details_dict):
+    """Backward-compatible persistence entry point used by detail endpoints."""
+    persist_match(match_dict, details_dict)
+    return True
 
 
 def score_to_int(score):
@@ -970,7 +1087,7 @@ def latest_started_map_score(games):
     return started_maps[-1][1], started_maps[-1][2]
 
 
-def save_player_stats(session, db_game, player_stats):
+def save_player_stats(session, db_game, player_stats, authoritative=False):
     # 👤 Save players
     seen_player_identities = set()
     for p_data in player_stats:
@@ -991,24 +1108,42 @@ def save_player_stats(session, db_game, player_stats):
             session.add(db_player)
 
         db_player.team_name = p_data['team']
-        db_player.role = p_data.get('role')
-        db_player.acs = int(p_data['acs']) if p_data['acs'].isdigit() else 0
+        incoming_role = p_data.get('role')
+        if authoritative or incoming_role:
+            db_player.role = incoming_role
+
+        def incoming_int(field):
+            value = str(p_data.get(field, '0'))
+            return int(value) if value.lstrip('-').isdigit() else 0
+
+        def merge_numeric(field, current):
+            incoming = incoming_int(field)
+            return incoming if authoritative or incoming != 0 or not current else current
+
+        db_player.acs = merge_numeric('acs', db_player.acs)
 
         try:
-            db_player.kd_ratio = float(p_data.get('k_d', '0'))
+            incoming_kd = float(p_data.get('k_d', '0'))
         except (TypeError, ValueError):
-            db_player.kd_ratio = 0.0
+            incoming_kd = 0.0
+        if authoritative or incoming_kd != 0 or not db_player.kd_ratio:
+            db_player.kd_ratio = incoming_kd
 
-        db_player.adr = int(p_data.get('adr', '0')) if p_data.get('adr', '0').isdigit() else 0
-        db_player.kills = int(p_data.get('kills', '0')) if p_data.get('kills', '0').lstrip('-').isdigit() else 0
-        db_player.deaths = int(p_data.get('deaths', '0')) if p_data.get('deaths', '0').lstrip('-').isdigit() else 0
-        db_player.assists = int(p_data.get('assists', '0')) if p_data.get('assists', '0').lstrip('-').isdigit() else 0
-        db_player.plus_minus = p_data.get('plus_minus', "0")
-        db_player.kast = p_data.get('kast', "0%")
-        db_player.first_kills = int(p_data.get('first_kills', '0')) if p_data.get('first_kills', '0').lstrip('-').isdigit() else 0
-        db_player.first_deaths = int(p_data.get('first_deaths', '0')) if p_data.get('first_deaths', '0').lstrip('-').isdigit() else 0
+        db_player.adr = merge_numeric('adr', db_player.adr)
+        db_player.kills = merge_numeric('kills', db_player.kills)
+        db_player.deaths = merge_numeric('deaths', db_player.deaths)
+        db_player.assists = merge_numeric('assists', db_player.assists)
+        db_player.first_kills = merge_numeric('first_kills', db_player.first_kills)
+        db_player.first_deaths = merge_numeric('first_deaths', db_player.first_deaths)
 
-    if seen_player_identities:
+        incoming_plus_minus = p_data.get('plus_minus', "0")
+        if authoritative or incoming_plus_minus not in {None, "", "0"} or not db_player.plus_minus:
+            db_player.plus_minus = incoming_plus_minus
+        incoming_kast = p_data.get('kast', "0%")
+        if authoritative or incoming_kast not in {None, "", "0%"} or not db_player.kast:
+            db_player.kast = incoming_kast
+
+    if authoritative and seen_player_identities:
         existing_stats = session.query(PlayerStat).filter(
             PlayerStat.game_id == db_game.id
         ).all()

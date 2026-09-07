@@ -41,6 +41,14 @@ valoreal/valorant_stats.db
 ```
 
 No manual database command or Python source edit is required for a clean checkout.
+Automated tests can isolate database state by setting `VALSCORES_DATABASE_PATH` to
+an alternate SQLite file.
+
+Schema changes use ordered, transactional migrations recorded in SQLite's
+`PRAGMA user_version`. Startup applies each pending version once. Version 2
+canonicalizes legacy match IDs, preserves and merges duplicate data, and enforces
+logical uniqueness plus cascading foreign keys. SQLite foreign-key enforcement is
+enabled for every application connection.
 
 ## Match timestamp contract
 

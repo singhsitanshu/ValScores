@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException, Query
-from sqlalchemy import create_engine, func
+from sqlalchemy import func
 from sqlalchemy.orm import sessionmaker
 from types import SimpleNamespace
 from datetime import datetime, timezone
@@ -8,12 +8,12 @@ import time
 import json
 import re
 
-from .database_setup import Match, Game, PlayerStat, DATABASE_URL
+from .database_setup import Match, Game, PlayerStat, engine as database_engine
 from .time_contract import normalize_explicit_utc_timestamp, parse_utc_datetime
 
 app = FastAPI()
 
-engine = create_engine(DATABASE_URL)
+engine = database_engine
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 STALE_TBD_REFRESH_INTERVAL_SECONDS = 300
 _last_stale_tbd_refresh_at = None

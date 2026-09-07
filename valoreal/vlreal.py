@@ -2,7 +2,10 @@ import requests
 from bs4 import BeautifulSoup
 import time
 import json
+import logging
 import re
+import warnings
+from urllib.parse import urljoin, urlparse
 from sqlalchemy.orm import sessionmaker
 from .database_setup import Match, Game, PlayerStat, engine as database_engine
 from .time_contract import (
@@ -12,113 +15,198 @@ from .time_contract import (
 )
 
 
+MATCH_STATUS_UPCOMING = "upcoming"
+MATCH_STATUS_LIVE = "live"
+MATCH_STATUS_FINISHED = "finished"
+MATCH_STATUSES = frozenset({
+    MATCH_STATUS_UPCOMING,
+    MATCH_STATUS_LIVE,
+    MATCH_STATUS_FINISHED,
+})
+
+DEFAULT_HTTP_TIMEOUT = (5, 20)
+DEFAULT_USER_AGENT = "ValScores/1.0 (+https://www.vlr.gg)"
+
+logger = logging.getLogger(__name__)
+
+
+class VlrUpstreamError(RuntimeError):
+    """Raised when VLR cannot be fetched or returns an unsuccessful response."""
+
+
+class MatchListParseError(RuntimeError):
+    """Raised when a VLR list page cannot produce any trustworthy records."""
+
+
+class MatchCardParseError(ValueError):
+    """Raised when one VLR match card is missing required identity data."""
+
+
+class MatchListParseWarning(UserWarning):
+    """Reports a malformed card that was skipped while its neighbors were retained."""
+
+
 class MatchDetailParseError(RuntimeError):
     """Raised when a VLR detail page contains an incompatible stats structure."""
 
 
+def normalize_match_status(value, default=None):
+    """Map VLR and legacy status labels onto the public three-state contract."""
+    normalized = str(value or "").strip().lower()
+    if "live" in normalized or "in progress" in normalized:
+        return MATCH_STATUS_LIVE
+    if any(marker in normalized for marker in ("completed", "finished", "final")):
+        return MATCH_STATUS_FINISHED
+    if normalized in {"upcoming", "tbd", "scheduled", "pending"}:
+        return MATCH_STATUS_UPCOMING
+    return default
+
+
 class VlrScraper:
-    def __init__(self):
+    def __init__(self, session=None, timeout=DEFAULT_HTTP_TIMEOUT):
         self.headers = {
-            'User-Agent': 'Mozilla/5.0'
+            'User-Agent': DEFAULT_USER_AGENT,
+            'Accept': 'text/html,application/xhtml+xml',
         }
         self.base_url = "https://www.vlr.gg"
+        self.session = session or requests.Session()
+        self.timeout = timeout
+        self.last_list_parse_failures = ()
 
     def get_matches(self):
         return self._get_match_list("/matches")
 
     def get_results(self):
-        return self._get_match_list("/matches/results", status_override="Finished")
+        return self._get_match_list(
+            "/matches/results",
+            status_override=MATCH_STATUS_FINISHED,
+        )
 
     def _get_match_list(self, path, status_override=None):
         url = f"{self.base_url}{path}"
-        response = requests.get(url, headers=self.headers, timeout=20)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
+        html = self._request_html(url)
+        return self.parse_match_list(html, status_override=status_override)
 
+    def parse_match_list(self, html, status_override=None):
+        """Parse a frozen or fetched VLR list page without performing I/O."""
+        soup = BeautifulSoup(html, 'html.parser')
         matches = []
         match_cards = self._match_cards_with_dates(soup)
+        if not match_cards:
+            self.last_list_parse_failures = ()
+            raise MatchListParseError("VLR list page contains no match cards")
 
-        for card, schedule_date in match_cards:
-            match_url = self.base_url + card['href']
+        failures = []
+        for card_index, (card, schedule_date) in enumerate(match_cards, start=1):
+            try:
+                matches.append(
+                    self._parse_match_card(card, schedule_date, status_override)
+                )
+            except MatchCardParseError as exc:
+                href = card.get('href') or "<missing href>"
+                failure = {
+                    'card_index': card_index,
+                    'href': href,
+                    'error': str(exc),
+                }
+                failures.append(failure)
+                message = f"Skipped malformed VLR match card {card_index} ({href}): {exc}"
+                logger.warning(message)
+                warnings.warn(message, MatchListParseWarning, stacklevel=2)
 
-            teams = card.find_all('div', class_='match-item-vs-team-name')
-            if len(teams) < 2:
-                continue
-
-            # 🔥 LIVE detection using ml-status
-            ml_status = card.find('div', class_='ml-status')
-            is_live = ml_status and "LIVE" in ml_status.text.upper()
-            
-            team1_round = "0"
-            team2_round = "0"
-
-            if is_live:
-                try:
-                    match_page = requests.get(match_url, headers=self.headers, timeout=20)
-                    match_soup = BeautifulSoup(match_page.text, 'html.parser')
-
-                    score_container = match_soup.find('div', class_='match-header-vs-score')
-                    if score_container:
-                        score_text = score_container.get_text(" ", strip=True)
-                        score_parts = [part for part in score_text.replace(":", " ").split() if part.isdigit()]
-                        if len(score_parts) >= 2:
-                            team1_round = score_parts[0]
-                            team2_round = score_parts[1]
-                except Exception as e:
-                    print(f"Failed to fetch live round score for {match_url}: {e}")
-
-            status_div = card.find('div', class_='match-item-status')
-            status_text = status_div.text.strip() if status_div else "Upcoming"
-            status = status_override or ("LIVE" if is_live else self._normalize_status(status_text))
-
-            # 🕒 Raw time string
-            match_time_str = card.find('div', class_='match-item-time').text.strip()
-
-            # 🔥 SCORE extraction from card (correct location)
-            score_divs = card.find_all('div', class_='match-item-vs-team-score')
-
-            team1_score = None
-            team2_score = None
-
-            if len(score_divs) >= 2:
-                try:
-                    if len(score_divs) > 2 and not score_divs[1].text.strip().isdigit():
-                        team1_score = score_divs[0].text.strip()
-                        team2_score = score_divs[2].text.strip()
-                    else:
-                        team1_score = score_divs[0].text.strip()
-                        team2_score = score_divs[1].text.strip()
-                except:
-                    pass
-
-            scheduled_time = self._combine_date_and_time(schedule_date, match_time_str)
-
-            matches.append({
-                'team1': teams[0].text.strip(),
-                'team2': teams[1].text.strip(),
-                'time': match_time_str,
-                'scheduled_time': scheduled_time,
-                'status': status,
-                'is_live': is_live,
-                'team1_score': team1_score,
-                'team2_score': team2_score,
-                'team1_round_score': team1_round,  # Pass the round scores to dictionary
-                'team2_round_score': team2_round,
-                'url': match_url
-            })
-
+        self.last_list_parse_failures = tuple(failures)
+        if not matches:
+            raise MatchListParseError(
+                f"All {len(match_cards)} VLR match cards were malformed"
+            )
         return matches
 
+    def _parse_match_card(self, card, schedule_date, status_override=None):
+        href = (card.get('href') or "").strip()
+        match_id = self._canonical_id_from_href(href)
+        if match_id is None:
+            raise MatchCardParseError("missing or invalid VLR match href")
+
+        team_nodes = card.select('.match-item-vs-team')
+        if len(team_nodes) < 2:
+            raise MatchCardParseError("expected two team containers")
+
+        team_names = []
+        team_scores = []
+        for team_node in team_nodes[:2]:
+            name_node = team_node.select_one('.match-item-vs-team-name')
+            name = name_node.get_text(" ", strip=True) if name_node else ""
+            if not name:
+                raise MatchCardParseError("team name is missing")
+            team_names.append(name)
+            team_scores.append(
+                self._optional_score(team_node.select_one('.match-item-vs-team-score'))
+            )
+
+        status_node = card.select_one('.ml-status, .match-item-status')
+        status_text = status_node.get_text(" ", strip=True) if status_node else None
+        status = normalize_match_status(status_override or status_text)
+        if status is None:
+            raise MatchCardParseError(
+                f"missing or unsupported match status: {status_text!r}"
+            )
+
+        time_node = card.select_one('.match-item-time')
+        match_time = time_node.get_text(" ", strip=True) if time_node else None
+        match_time = match_time or None
+        scheduled_time = self._combine_date_and_time(schedule_date, match_time)
+        if match_time and match_time.upper() != "TBD" and scheduled_time is None:
+            raise MatchCardParseError(
+                f"could not parse schedule heading/time: {schedule_date!r} / {match_time!r}"
+            )
+
+        match_url = urljoin(f"{self.base_url}/", href)
+        return {
+            'vlr_match_id': match_id,
+            'team1': team_names[0],
+            'team2': team_names[1],
+            'time': match_time,
+            'scheduled_time': scheduled_time,
+            'status': status,
+            'is_live': status == MATCH_STATUS_LIVE,
+            'team1_score': team_scores[0],
+            'team2_score': team_scores[1],
+            # Round scores are not present in VLR list cards. Detail ingestion
+            # may populate them later without inventing a list-level zero.
+            'team1_round_score': None,
+            'team2_round_score': None,
+            'url': match_url,
+        }
+
+    def _canonical_id_from_href(self, href):
+        parsed_url = urlparse(urljoin(f"{self.base_url}/", href))
+        if parsed_url.netloc != urlparse(self.base_url).netloc:
+            return None
+        path = parsed_url.path
+        match = re.match(r"^/(\d+)(?:/|$)", path)
+        return f"/{match.group(1)}" if match else None
+
+    def _optional_score(self, score_node):
+        if score_node is None:
+            return None
+        score = score_node.get_text(" ", strip=True)
+        return score if re.fullmatch(r"\d+", score) else None
+
+    def _request_html(self, url):
+        try:
+            response = self.session.get(
+                url,
+                headers=self.headers,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise VlrUpstreamError(f"Unable to fetch VLR page {url}: {exc}") from exc
+        return response.text
+
     def _normalize_status(self, status):
-        status_upper = status.upper() if status else ""
-
-        if "LIVE" in status_upper:
-            return "LIVE"
-
-        if "COMPLETED" in status_upper or "FINISHED" in status_upper:
-            return "Finished"
-
-        return "Upcoming"
+        """Compatibility wrapper for callers of the former private helper."""
+        return normalize_match_status(status, default=MATCH_STATUS_UPCOMING)
 
     def _match_cards_with_dates(self, soup):
         cards = []
@@ -147,9 +235,7 @@ class VlrScraper:
         return parse_vlr_schedule_timestamp(schedule_date, match_time)
 
     def get_match_details(self, match_url):
-        response = requests.get(match_url, headers=self.headers, timeout=20)
-        response.raise_for_status()
-        return self.parse_match_details(response.text)
+        return self.parse_match_details(self._request_html(match_url))
 
     def parse_match_details(self, html):
         """Parse a frozen or fetched VLR match-detail page without doing I/O."""
@@ -196,7 +282,7 @@ class VlrScraper:
         saw_current_rows = False
         has_partial_stats = False
 
-        if stats_root and not stats_containers and match_data['status'] in {'LIVE', 'Finished'}:
+        if stats_root and not stats_containers and match_data['status'] in {MATCH_STATUS_LIVE, MATCH_STATUS_FINISHED}:
             raise MatchDetailParseError(
                 "VLR stats root was found, but no vm-stats-game containers matched"
             )
@@ -218,7 +304,7 @@ class VlrScraper:
             player_stats, player_warnings, row_state = self._extract_player_stats(stats_container)
             if row_state == 'absent':
                 player_warnings.append("no supported player-stat rows matched")
-            elif row_state == 'pending' and match_data['status'] in {'LIVE', 'Finished'}:
+            elif row_state == 'pending' and match_data['status'] in {MATCH_STATUS_LIVE, MATCH_STATUS_FINISHED}:
                 player_warnings.append("player-stat rows contain no populated statistics")
             parsed_player_count += len(player_stats)
             saw_current_rows = saw_current_rows or row_state != 'absent'
@@ -242,7 +328,7 @@ class VlrScraper:
 
         if parsed_player_count:
             match_data['stats_status'] = 'partial' if has_partial_stats else 'available'
-        elif stats_containers and match_data['status'] in {'LIVE', 'Finished'}:
+        elif stats_containers and match_data['status'] in {MATCH_STATUS_LIVE, MATCH_STATUS_FINISHED}:
             if not saw_current_rows:
                 raise MatchDetailParseError(
                     "VLR map containers were found, but no supported player-stat rows matched"
@@ -301,17 +387,17 @@ class VlrScraper:
     def _extract_match_status(self, soup):
         notes = soup.select('.match-header-vs-note')
         if any('mod-upcoming' in note.get('class', []) for note in notes):
-            return "Upcoming"
+            return MATCH_STATUS_UPCOMING
 
         status_text = " ".join(note.get_text(" ", strip=True) for note in notes)
         status_upper = status_text.upper()
 
         if "LIVE" in status_upper:
-            return "LIVE"
+            return MATCH_STATUS_LIVE
         if "FINAL" in status_upper or "FINISHED" in status_upper or "COMPLETED" in status_upper:
-            return "Finished"
+            return MATCH_STATUS_FINISHED
         if "UPCOMING" in status_upper:
-            return "Upcoming"
+            return MATCH_STATUS_UPCOMING
 
         return None
 
@@ -576,10 +662,10 @@ def richer_match(existing, candidate):
 
 
 def status_rank(status):
-    status_upper = (status or "").upper()
-    if "FINISHED" in status_upper or "COMPLETED" in status_upper or "FINAL" in status_upper:
+    normalized = normalize_match_status(status)
+    if normalized == MATCH_STATUS_FINISHED:
         return 2
-    if "LIVE" in status_upper:
+    if normalized == MATCH_STATUS_LIVE:
         return 1
     return 0
 
@@ -595,7 +681,7 @@ def merge_duplicate_match(session, primary, duplicate):
             primary.team2_name = duplicate.team2_name
 
     if status_rank(duplicate.status) > status_rank(primary.status):
-        primary.status = duplicate.status
+        primary.status = normalize_match_status(duplicate.status, MATCH_STATUS_UPCOMING)
 
     if duplicate.start_time and not primary.start_time:
         primary.start_time = duplicate.start_time
@@ -656,6 +742,10 @@ def find_match_for_save(session, canonical_id):
             merge_duplicate_match(session, primary, duplicate)
 
     primary.vlr_match_id = canonical_id
+    primary.status = normalize_match_status(
+        primary.status,
+        MATCH_STATUS_UPCOMING,
+    )
     session.flush()
     return primary
 
@@ -663,7 +753,9 @@ def find_match_for_save(session, canonical_id):
 def save_to_database(match_dict, details_dict):
     session = Session()
     try:
-        match_id_string = canonical_match_id(match_dict['url'])
+        match_id_string = canonical_match_id(
+            match_dict.get('vlr_match_id') or match_dict['url']
+        )
         if not match_id_string:
             raise ValueError("A VLR match ID is required")
         db_match = find_match_for_save(session, match_id_string)
@@ -675,7 +767,10 @@ def save_to_database(match_dict, details_dict):
         legacy_time = None if best_time else match_dict.get('time')
         team1_name = details_dict.get('team1') or match_dict.get('team1')
         team2_name = details_dict.get('team2') or match_dict.get('team2')
-        status = details_dict.get('status') or match_dict['status']
+        status = normalize_match_status(
+            details_dict.get('status') or match_dict.get('status'),
+            MATCH_STATUS_UPCOMING,
+        )
 
         if not db_match:
             db_match = Match(
@@ -709,24 +804,28 @@ def save_to_database(match_dict, details_dict):
             db_match.team1_round_score = incoming_round_scores[0] or "0"
             db_match.team2_round_score = incoming_round_scores[1] or "0"
 
-        status_upper = (db_match.status or status or '').upper()
+        current_status = normalize_match_status(
+            db_match.status or status,
+            MATCH_STATUS_UPCOMING,
+        )
+        db_match.status = current_status
         # 🔥 PRIORITY: Use card score (best for LIVE)
         if match_dict.get('team1_score') and match_dict.get('team2_score'):
             try:
                 db_match.team1_series_score = int(match_dict['team1_score'])
                 db_match.team2_series_score = int(match_dict['team2_score'])
-            except:
-                pass
+            except (TypeError, ValueError) as exc:
+                logger.warning("Ignoring invalid list-card series score: %s", exc)
 
         # 🔁 Fallback: use match page score
         elif details_dict.get('live_score'):
             try:
                 db_match.team1_series_score = int(details_dict['live_score'].get('team1', 0))
                 db_match.team2_series_score = int(details_dict['live_score'].get('team2', 0))
-            except:
-                pass
+            except (TypeError, ValueError) as exc:
+                logger.warning("Ignoring invalid detail-page series score: %s", exc)
 
-        elif "UPCOMING" in status_upper:
+        elif current_status == MATCH_STATUS_UPCOMING:
             db_match.team1_series_score = None
             db_match.team2_series_score = None
 
@@ -746,7 +845,7 @@ def save_to_database(match_dict, details_dict):
                 'player_stats': details_dict['player_stats']
             }]
 
-        if "LIVE" in status_upper:
+        if current_status == MATCH_STATUS_LIVE:
             live_map_score = latest_started_map_score(games)
             if live_map_score:
                 db_match.team1_round_score = live_map_score[0]
@@ -789,12 +888,12 @@ def save_to_database(match_dict, details_dict):
             save_player_stats(session, db_game, game_data.get('player_stats', []))
 
         derived_series_score = series_score_from_games(games)
-        if derived_series_score and "LIVE" not in status_upper:
+        if derived_series_score and current_status != MATCH_STATUS_LIVE:
             db_match.team1_series_score = derived_series_score[0]
             db_match.team2_series_score = derived_series_score[1]
 
-            if "UPCOMING" in status_upper:
-                db_match.status = "Finished"
+            if current_status == MATCH_STATUS_UPCOMING:
+                db_match.status = MATCH_STATUS_FINISHED
 
         session.commit()
         print(f"✅ Saved: {db_match.team1_name} vs {db_match.team2_name} | {db_match.team1_series_score}-{db_match.team2_series_score}")
@@ -897,7 +996,7 @@ def save_player_stats(session, db_game, player_stats):
 
         try:
             db_player.kd_ratio = float(p_data.get('k_d', '0'))
-        except:
+        except (TypeError, ValueError):
             db_player.kd_ratio = 0.0
 
         db_player.adr = int(p_data.get('adr', '0')) if p_data.get('adr', '0').isdigit() else 0

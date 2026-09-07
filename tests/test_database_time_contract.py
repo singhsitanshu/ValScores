@@ -108,6 +108,7 @@ class DatabaseTimeContractTests(unittest.TestCase):
             self.assertEqual(timeline[0]["start_time"], "2026-09-06T13:00:00Z")
             self.assertIsNone(timeline[1]["start_time"])
             for match in timeline:
+                self.assertEqual(match["status"], "upcoming")
                 self.assertNotIn("time", match)
                 self.assertNotIn("date_label", match)
 

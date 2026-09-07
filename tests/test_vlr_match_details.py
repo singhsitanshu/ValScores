@@ -25,7 +25,7 @@ class VlrMatchDetailTests(unittest.TestCase):
             fixture("vlr_completed_multi_map.html")
         )
 
-        self.assertEqual(details["status"], "Finished")
+        self.assertEqual(details["status"], "finished")
         self.assertEqual(details["team1"], "Alpha Five")
         self.assertEqual(details["team2"], "Bravo Crew")
         self.assertEqual(details["live_score"], {"team1": "2", "team2": "0"})
@@ -95,7 +95,7 @@ class VlrMatchDetailTests(unittest.TestCase):
     def test_live_partial_stats_are_retained_and_warned(self):
         details = self.scraper.parse_match_details(fixture("vlr_live_partial.html"))
 
-        self.assertEqual(details["status"], "LIVE")
+        self.assertEqual(details["status"], "live")
         self.assertEqual(details["stats_status"], "partial")
         self.assertEqual(details["live_score"], {"team1": "1", "team2": "0"})
         self.assertEqual(len(details["games"][0]["player_stats"]), 2)
@@ -109,7 +109,7 @@ class VlrMatchDetailTests(unittest.TestCase):
             fixture("vlr_upcoming_stats_pending.html")
         )
 
-        self.assertEqual(details["status"], "Upcoming")
+        self.assertEqual(details["status"], "upcoming")
         self.assertEqual(details["stats_status"], "unavailable")
         self.assertEqual(details["games"][0]["player_stats"], [])
 

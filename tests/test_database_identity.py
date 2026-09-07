@@ -126,7 +126,7 @@ class DatabaseIdentityTests(unittest.TestCase):
         session = self.session_factory()
         try:
             match = session.query(Match).one()
-            self.assertEqual(match.status, "LIVE")
+            self.assertEqual(match.status, "live")
             self.assertEqual((match.team1_series_score, match.team2_series_score), (1, 0))
             self.assertEqual((match.team1_round_score, match.team2_round_score), ("7", "5"))
         finally:
@@ -160,7 +160,7 @@ class DatabaseIdentityTests(unittest.TestCase):
         self.assertEqual(session.query(Match).count(), 1)
         self.assertEqual(canonical.vlr_match_id, "/12345")
         self.assertEqual((canonical.team1_name, canonical.team2_name), ("Alpha", "Bravo"))
-        self.assertEqual(canonical.status, "Finished")
+        self.assertEqual(canonical.status, "finished")
         self.assertEqual((canonical.team1_series_score, canonical.team2_series_score), (2, 1))
         session.close()
 

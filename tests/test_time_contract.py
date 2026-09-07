@@ -11,6 +11,19 @@ from valoreal.time_contract import (
 
 
 class TimeContractTests(unittest.TestCase):
+    def test_all_full_month_names(self):
+        for month in (
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December",
+        ):
+            with self.subTest(month=month):
+                self.assertIsNotNone(
+                    parse_vlr_schedule_timestamp(
+                        f"Mon, {month} 1, 2027",
+                        "1:00 PM",
+                    )
+                )
+
     def test_full_month_name(self):
         self.assertEqual(
             parse_vlr_schedule_timestamp("Sun, September 6, 2026 Today", "12:00 PM"),

@@ -3,7 +3,14 @@ from sqlalchemy import func
 from sqlalchemy.orm import sessionmaker
 from types import SimpleNamespace
 from datetime import datetime, timezone
-from .vlreal import VlrScraper, save_to_database
+from .vlreal import (
+    MATCH_STATUS_FINISHED,
+    MATCH_STATUS_LIVE,
+    MATCH_STATUS_UPCOMING,
+    VlrScraper,
+    normalize_match_status,
+    save_to_database,
+)
 import time
 import json
 import re
@@ -37,10 +44,10 @@ def has_meaningful_score(team1_score, team2_score):
     )
 
 def better_timeline_match(existing, candidate):
-    existing_status = (existing.status or "").upper()
-    candidate_status = (candidate.status or "").upper()
-    if ("LIVE" in candidate_status) != ("LIVE" in existing_status):
-        return "LIVE" in candidate_status
+    existing_status = normalize_match_status(existing.status)
+    candidate_status = normalize_match_status(candidate.status)
+    if (candidate_status == MATCH_STATUS_LIVE) != (existing_status == MATCH_STATUS_LIVE):
+        return candidate_status == MATCH_STATUS_LIVE
 
     existing_score = has_meaningful_score(existing.team1_series_score, existing.team2_series_score)
     candidate_score = has_meaningful_score(candidate.team1_series_score, candidate.team2_series_score)
@@ -252,8 +259,11 @@ def refresh_match_details(match):
         "team2": details.get("team2") or match.team2_name,
         "time": match.legacy_start_time or "",
         "scheduled_time": match.start_time,
-        "status": details.get("status") or match.status or "Upcoming",
-        "is_live": "LIVE" in (match.status or "").upper(),
+        "status": normalize_match_status(
+            details.get("status") or match.status,
+            MATCH_STATUS_UPCOMING,
+        ),
+        "is_live": normalize_match_status(match.status) == MATCH_STATUS_LIVE,
         "team1_score": score_to_string(match.team1_series_score),
         "team2_score": score_to_string(match.team2_series_score),
         "team1_round_score": match.team1_round_score or "0",
@@ -325,8 +335,8 @@ def should_refresh_players(match, players):
     if not players:
         return True
 
-    status_upper = (match.status or "").upper()
-    has_final_stats = "LIVE" in status_upper or "FINISHED" in status_upper or "COMPLETED" in status_upper
+    status = normalize_match_status(match.status)
+    has_final_stats = status in {MATCH_STATUS_LIVE, MATCH_STATUS_FINISHED}
     has_empty_stat_rows = any(
         (player.acs or 0) == 0
         and (player.adr or 0) == 0
@@ -368,20 +378,19 @@ def get_timeline():
         
         result = []
         for match in matches:
-            status_upper = match.status.upper() if match.status else ""
-            is_live = "LIVE" in status_upper
-            is_finished = "FINISHED" in status_upper or "COMPLETED" in status_upper
+            status = normalize_match_status(match.status, MATCH_STATUS_UPCOMING)
+            is_live = status == MATCH_STATUS_LIVE
+            is_finished = status == MATCH_STATUS_FINISHED
             match_games = session.query(Game).filter(Game.match_id == match.id).all()
             derived_series_score = map_wins_from_games(match_games)
             if derived_series_score and not is_live:
                 is_finished = True
 
             show_series_score = is_live or is_finished
-            status = match.status
             if not is_live and not is_finished:
-                status = "Upcoming"
+                status = MATCH_STATUS_UPCOMING
             elif is_finished and not is_live:
-                status = "Finished"
+                status = MATCH_STATUS_FINISHED
 
             team1_series_score = match.team1_series_score
             team2_series_score = match.team2_series_score
@@ -478,9 +487,12 @@ def force_refresh_matches(limit: int = 50, details_limit: int = 12, results_limi
     print("Forcing a manual scrape...")
     scraper = VlrScraper()
     matches = scraper.get_matches()
+    match_list_failures = list(scraper.last_list_parse_failures)
     results = scraper.get_results()
+    result_list_failures = list(scraper.last_list_parse_failures)
 
     saved_count = 0
+    detail_failures = []
     selected_matches = matches[:limit]
     selected_results = results[:results_limit]
     for index, match in enumerate(selected_matches + selected_results):
@@ -495,6 +507,11 @@ def force_refresh_matches(limit: int = 50, details_limit: int = 12, results_limi
                 time.sleep(0.5) # Be nice to VLR to avoid rate limits.
             except Exception as exc:
                 print(f"Could not fetch details for {match['url']}: {exc}")
+                detail_failures.append({
+                    "vlr_match_id": match.get("vlr_match_id"),
+                    "url": match["url"],
+                    "error": str(exc),
+                })
 
         save_to_database(match, details)
         saved_count += 1
@@ -504,5 +521,10 @@ def force_refresh_matches(limit: int = 50, details_limit: int = 12, results_limi
     return {
         "message": "Database successfully updated!",
         "saved": saved_count,
-        "tbd_refreshed": tbd_refreshed_count
+        "tbd_refreshed": tbd_refreshed_count,
+        "parse_failures": {
+            "matches": match_list_failures,
+            "results": result_list_failures,
+            "details": detail_failures,
+        },
     }

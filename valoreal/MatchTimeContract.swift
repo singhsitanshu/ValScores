@@ -4,14 +4,14 @@ struct MatchInfo: Codable, Identifiable {
     let id: Int
     let team1: String
     let team2: String
-    let team1_score: String
-    let team2_score: String
+    let team1_score: Int?
+    let team2_score: Int?
     let status: String
     let startTime: Date?
     let is_live: Bool
     let is_finished: Bool
-    let team1_round_score: String?
-    let team2_round_score: String?
+    let team1_round_score: Int?
+    let team2_round_score: Int?
 
     enum CodingKeys: String, CodingKey {
         case id

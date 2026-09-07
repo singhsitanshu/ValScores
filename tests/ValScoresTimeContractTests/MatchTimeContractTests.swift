@@ -75,14 +75,14 @@ struct MatchTimeContractTests {
             "id": 1,
             "team1": "Alpha",
             "team2": "Bravo",
-            "team1_score": "",
-            "team2_score": "",
+            "team1_score": NSNull(),
+            "team2_score": NSNull(),
             "status": "Upcoming",
             "start_time": timestamp ?? NSNull(),
             "is_live": false,
             "is_finished": false,
-            "team1_round_score": "0",
-            "team2_round_score": "0",
+            "team1_round_score": 0,
+            "team2_round_score": 0,
         ]
         let data = try JSONSerialization.data(withJSONObject: payload)
         return try MatchTimeContract.makeDecoder().decode(MatchInfo.self, from: data)

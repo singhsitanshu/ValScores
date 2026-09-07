@@ -59,9 +59,25 @@ enabled for every application connection.
 - The timeline API returns `start_time` as an ISO-8601 UTC string or `null`.
 - Swift decodes `start_time` into `Date` and uses the device's current `Calendar` and timezone for grouping and display.
 
-## Timestamp tests
+## Client API contract
+
+- `GET /api/matches/timeline` requires timezone-aware `start` and `end` query
+  parameters. The interval is start-inclusive, end-exclusive, and limited to 31 days.
+- `GET /api/matches/{match_id}/stats?game_id=all` reads only persisted data.
+  Supplying a specific game ID selects that exact game or returns `404`.
+- Both GET endpoints are read-only: they never scrape VLR or mutate SQLite.
+- `POST /api/matches/refresh` is the only endpoint that fetches and persists
+  external match data. Its `limit`, `details_limit`, and `results_limit` query
+  parameters are bounded and documented in OpenAPI.
+- Errors use the stable shape `{"error":{"code":"...","message":"..."}}`.
+
+Timeline scores and map round scores are JSON integers or `null`. Player-stat
+numeric fields always contain a number; unavailable values are serialized as zero.
+
+## Tests
 
 ```bash
+python -m pip install -e '.[test]'
 PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -p 'test_*.py' -v
 swiftc -parse-as-library valoreal/MatchTimeContract.swift tests/ValScoresTimeContractTests/MatchTimeContractTests.swift -o /tmp/valscores-time-contract-tests
 /tmp/valscores-time-contract-tests

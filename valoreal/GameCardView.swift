@@ -3,10 +3,9 @@ import SwiftUI
 struct GameCardView: View {
     let match: MatchInfo
 
-    private func displayScore(_ score: String?) -> String {
-        guard let score = score else { return match.is_live ? "0" : "" }
-        let cleanScore = score.trimmingCharacters(in: .whitespacesAndNewlines)
-        return cleanScore.isEmpty ? (match.is_live ? "0" : "") : cleanScore
+    private func displayScore(_ score: Int?) -> String {
+        guard let score else { return match.is_live ? "0" : "" }
+        return String(score)
     }
 
     private var team1PrimaryScore: String {

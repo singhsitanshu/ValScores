@@ -74,8 +74,10 @@ class DatabaseTimeContractTests(unittest.TestCase):
                 database_path,
                 """
                 import json
+                from datetime import datetime, timezone
 
                 from valoreal import api
+                from valoreal.api_models import TimelineMatchResponse
                 from valoreal.database_setup import Match
 
                 session = api.SessionLocal()
@@ -99,13 +101,20 @@ class DatabaseTimeContractTests(unittest.TestCase):
                 session.commit()
                 session.close()
 
-                print(json.dumps(api.get_timeline()))
+                timeline = api.get_timeline(
+                    datetime(2026, 9, 1, tzinfo=timezone.utc),
+                    datetime(2026, 9, 10, tzinfo=timezone.utc),
+                )
+                print(json.dumps([
+                    TimelineMatchResponse.model_validate(item).model_dump(mode="json")
+                    for item in timeline
+                ]))
                 """,
             )
             timeline = json.loads(completed.stdout)
 
+            self.assertEqual(len(timeline), 1)
             self.assertEqual(timeline[0]["start_time"], "2026-09-06T13:00:00Z")
-            self.assertIsNone(timeline[1]["start_time"])
             for match in timeline:
                 self.assertEqual(match["status"], "upcoming")
                 self.assertNotIn("time", match)

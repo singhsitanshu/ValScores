@@ -30,9 +30,6 @@ struct GamesListView: View {
                 }
             }
         }
-        .onAppear {
-            dataManager.fetchTimeline()
-        }
         .onChange(of: selectedDate) { newDate in
             dataManager.filterMatches(for: newDate)
         }
@@ -44,7 +41,7 @@ struct GamesListView: View {
         }
         .task {
             // Instantly load what is currently in the database
-            dataManager.fetchTimeline()
+            dataManager.fetchTimeline(for: selectedDate)
         }
     }
     

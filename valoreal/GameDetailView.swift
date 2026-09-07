@@ -19,8 +19,8 @@ struct MapStatInfo: Codable, Identifiable {
     let game_id: String
     let map_number: Int
     let map_name: String
-    let team1_round_score: String
-    let team2_round_score: String
+    let team1_round_score: Int?
+    let team2_round_score: Int?
 }
 
 struct PlayerStatInfo: Codable, Identifiable {
@@ -38,6 +38,21 @@ struct PlayerStatInfo: Codable, Identifiable {
     let kast: String
     let first_kills: Int
     let first_deaths: Int
+}
+
+private struct APIErrorResponse: Decodable {
+    let error: APIErrorDetail
+}
+
+private struct APIErrorDetail: Decodable {
+    let code: String
+    let message: String
+}
+
+private struct StatsRequestError: LocalizedError {
+    let message: String
+
+    var errorDescription: String? { message }
 }
 
 struct GameDetailView: View {
@@ -335,8 +350,8 @@ struct GameDetailView: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.white)
 
-                if !map.team1_round_score.isEmpty || !map.team2_round_score.isEmpty {
-                    Text("\(map.team1_round_score)-\(map.team2_round_score)")
+                if map.team1_round_score != nil || map.team2_round_score != nil {
+                    Text("\(map.team1_round_score ?? 0)-\(map.team2_round_score ?? 0)")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.white.opacity(0.54))
                 }
@@ -457,7 +472,14 @@ struct GameDetailView: View {
         }
 
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard
+                let httpResponse = response as? HTTPURLResponse,
+                (200..<300).contains(httpResponse.statusCode)
+            else {
+                let apiError = try? JSONDecoder().decode(APIErrorResponse.self, from: data)
+                throw StatsRequestError(message: apiError?.error.message ?? "Could not load player stats.")
+            }
             let decodedStats = try JSONDecoder().decode(MatchStatsResponse.self, from: data)
 
             await MainActor.run {
@@ -467,7 +489,7 @@ struct GameDetailView: View {
             }
         } catch {
             await MainActor.run {
-                statsError = "Could not load player stats."
+                statsError = error.localizedDescription
                 isLoadingStats = false
             }
         }
@@ -581,8 +603,8 @@ private struct MatchDetailHeaderView: View {
         )
     }
 
-    private func cleanScore(_ score: String?) -> String {
-        score?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    private func cleanScore(_ score: Int?) -> String {
+        score.map(String.init) ?? ""
     }
 }
 

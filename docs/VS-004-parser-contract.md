@@ -17,8 +17,11 @@ existing API contract.
 VLR currently exposes played agents as image metadata. Those values are not
 tactical roles and are never written to `PlayerStat.role`. Persisting agents
 would require a multi-agent-per-map database and API contract plus an iOS UI
-change, so it is deferred from V1 of this repair. The player subtitle therefore
-continues to use the VLR team abbreviation when `role` is empty.
+change, so it is deferred from V1 of this repair. The API exposes the parser's
+team tag as `team_abbreviation`, and the player subtitle names that data
+directly instead of presenting it as a tactical role. The existing `role`
+response field remains available for contract compatibility but is not used as
+a substitute for agents or a team abbreviation.
 
 Follow-up: add an explicit `agents: [String]` field through the parser,
 database, API, and Swift models, then render agent names or icons without

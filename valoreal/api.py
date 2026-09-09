@@ -340,6 +340,7 @@ def player_to_dict(player, canonical_team_name):
     return {
         "name": player.player_name,
         "team": canonical_team_name,
+        "team_abbreviation": player.team_name or "",
         "role": player.role or "",
         "acs": int(player.acs or 0),
         "kd": float(player.kd_ratio or 0.0),

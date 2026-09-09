@@ -1,24 +1,46 @@
 import SwiftUI
 
+private enum MatchDetailTab: CaseIterable, Hashable, Identifiable {
+    case game
+    case team1
+    case team2
+
+    var id: Self { self }
+}
+
+private struct MatchDetailRequestKey: Hashable {
+    let gameID: String
+    let revision: Int
+}
+
 struct GameDetailView: View {
-    // 櫨 NEW: Pass the clicked match into this view
     let match: MatchInfo
 
     @EnvironmentObject private var dataManager: VLRDataManager
-    
-    @State private var selectedTab = "Game"
-    @State private var stats: MatchStatsResponse?
-    @State private var isLoadingStats = false
-    @State private var statsError: String?
+
+    @StateObject private var detailState = MatchDetailState()
+    @State private var selectedTab: MatchDetailTab = .game
     @State private var selectedGameId = "all"
-    
-    // 櫨 UPDATED: Make tabs dynamic based on the actual team names
-    var tabs: [String] {
-        ["Game", match.team1, match.team2]
+    @State private var requestRevision = 0
+
+    private var stats: MatchStatsResponse? {
+        detailState.response
     }
-    
+
     private var availableMaps: [MapStatInfo] {
         stats?.match_info.maps ?? []
+    }
+
+    private var team1Name: String {
+        stats?.match_info.team1 ?? match.team1
+    }
+
+    private var team2Name: String {
+        stats?.match_info.team2 ?? match.team2
+    }
+
+    private var teamTitles: MatchDetailTeamTitles {
+        MatchDetailTeamTitles(team1: team1Name, team2: team2Name)
     }
 
     private var team1Color: Color {
@@ -30,11 +52,11 @@ struct GameDetailView: View {
     }
 
     private var selectedAccentColor: Color {
-        if selectedTab == match.team1 {
+        if selectedTab == .team1 {
             return team1Color
         }
 
-        if selectedTab == match.team2 {
+        if selectedTab == .team2 {
             return team2Color
         }
 
@@ -65,12 +87,11 @@ struct GameDetailView: View {
                 
                 // Custom Top Tab Bar
                 HStack(spacing: 0) {
-                    ForEach(tabs, id: \.self) { tab in
+                    ForEach(MatchDetailTab.allCases) { tab in
                         let tabColor = accentColor(for: tab)
 
                         VStack(spacing: 8) {
-                            // 櫨 Ensure long team names fit nicely in the tab bar
-                            Text(tab)
+                            Text(tabTitle(for: tab))
                                 .font(.system(size: 16, weight: .bold))
                                 .foregroundColor(selectedTab == tab ? .white : .white.opacity(0.48))
                                 .lineLimit(1)
@@ -96,13 +117,12 @@ struct GameDetailView: View {
                 
                 // Main Content Area
                 ScrollView {
-                    // 櫨 UPDATED: Routing tabs based on the dynamic team names
-                    if selectedTab == match.team1 {
+                    if selectedTab == .team1 {
                         rosterView(players: stats?.team1_roster ?? [])
-                        
-                    } else if selectedTab == match.team2 {
+
+                    } else if selectedTab == .team2 {
                         rosterView(players: stats?.team2_roster ?? [])
-                        
+
                     } else {
                         overviewView
                     }
@@ -111,8 +131,8 @@ struct GameDetailView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: selectedGameId) {
-            await fetchStats()
+        .task(id: MatchDetailRequestKey(gameID: selectedGameId, revision: requestRevision)) {
+            await fetchStats(for: selectedGameId)
         }
     }
 
@@ -143,16 +163,27 @@ struct GameDetailView: View {
         .ignoresSafeArea()
     }
 
-    private func accentColor(for tab: String) -> Color {
-        if tab == match.team1 {
+    private func accentColor(for tab: MatchDetailTab) -> Color {
+        if tab == .team1 {
             return team1Color
         }
 
-        if tab == match.team2 {
+        if tab == .team2 {
             return team2Color
         }
 
         return mixedAccentColor
+    }
+
+    private func tabTitle(for tab: MatchDetailTab) -> String {
+        switch tab {
+        case .game:
+            return "Game"
+        case .team1:
+            return teamTitles.team1
+        case .team2:
+            return teamTitles.team2
+        }
     }
 
     private func topGlassBar(opacity: Double) -> some View {
@@ -212,72 +243,116 @@ struct GameDetailView: View {
 
     private var overviewView: some View {
         VStack(spacing: 16) {
-            if isLoadingStats {
-                ProgressView()
-                    .tint(selectedAccentColor)
-                    .padding(.top, 40)
-            } else if let statsError {
-                Text(statsError)
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-                    .padding(.top, 40)
-            } else if let stats, !availableMaps.isEmpty || !stats.match_info.map_vetoes.isEmpty {
-                VStack(alignment: .leading, spacing: 18) {
-                    if !availableMaps.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Maps")
-                                .font(.headline)
-                                .foregroundColor(.white)
-
-                            ForEach(availableMaps) { map in
-                                Button {
-                                    selectMap(map)
-                                    selectedTab = match.team1
-                                } label: {
-                                    mapRow(map)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(12)
-                        .background(sectionSurface())
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(Color.white.opacity(0.14), lineWidth: 1)
-                        )
-                    }
-
-                    if !stats.match_info.map_vetoes.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Map Vetoes")
-                                .font(.headline)
-                                .foregroundColor(.white)
-
-                            ForEach(stats.match_info.map_vetoes, id: \.self) { veto in
-                                Text(veto)
-                                    .font(.system(size: 13))
-                                    .foregroundColor(.gray)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-                        .padding(12)
-                        .background(sectionSurface(opacity: 0.08))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                        )
-                    }
+            if stats == nil {
+                if detailState.phase.isLoading || detailState.phase == .idle {
+                    loadingStatsView(topPadding: 40)
+                } else if let message = detailState.phase.errorMessage {
+                    statsErrorView(message: message, topPadding: 40)
+                } else {
+                    emptyOverviewView
                 }
-                .padding()
-            } else {
-                Text("No map vetoes available yet.")
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-                    .padding(.top, 40)
+            } else if let stats {
+                if detailState.phase.isLoading {
+                    loadingStatsView(label: "Loading selected map…", topPadding: 12)
+                } else if let message = detailState.phase.errorMessage {
+                    statsErrorView(message: message, topPadding: 12)
+                }
+
+                if !availableMaps.isEmpty || !stats.match_info.map_vetoes.isEmpty {
+                    VStack(alignment: .leading, spacing: 18) {
+                        if !availableMaps.isEmpty {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Maps")
+                                    .font(.headline)
+                                    .foregroundColor(.white)
+
+                                ForEach(availableMaps) { map in
+                                    Button {
+                                        selectMap(map)
+                                        selectedTab = .team1
+                                    } label: {
+                                        mapRow(map)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(12)
+                            .background(sectionSurface())
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                            )
+                        }
+
+                        if !stats.match_info.map_vetoes.isEmpty {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Map Vetoes")
+                                    .font(.headline)
+                                    .foregroundColor(.white)
+
+                                ForEach(stats.match_info.map_vetoes, id: \.self) { veto in
+                                    Text(veto)
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.gray)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                            .padding(12)
+                            .background(sectionSurface(opacity: 0.08))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                            )
+                        }
+                    }
+                    .padding()
+                } else {
+                    emptyOverviewView
+                }
             }
         }
+    }
+
+    private var emptyOverviewView: some View {
+        Text("No map or veto information is available yet.")
+            .font(.subheadline)
+            .foregroundColor(.gray)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal)
+            .padding(.top, 40)
+    }
+
+    private func loadingStatsView(
+        label: String = "Loading match details…",
+        topPadding: CGFloat
+    ) -> some View {
+        VStack(spacing: 10) {
+            ProgressView()
+                .tint(selectedAccentColor)
+            Text(label)
+                .font(.subheadline)
+                .foregroundColor(.gray)
+        }
+        .padding(.top, topPadding)
+    }
+
+    private func statsErrorView(message: String, topPadding: CGFloat) -> some View {
+        VStack(spacing: 10) {
+            Text("Couldn’t load match details")
+                .font(.headline)
+                .foregroundColor(.white.opacity(0.84))
+            Text(message)
+                .font(.subheadline)
+                .foregroundColor(.gray)
+                .multilineTextAlignment(.center)
+            Button("Retry") {
+                retryStats()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(selectedAccentColor)
+        }
+        .padding(.horizontal)
+        .padding(.top, topPadding)
     }
 
     private func mapRow(_ map: MapStatInfo) -> some View {
@@ -297,8 +372,9 @@ struct GameDetailView: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.white)
 
-                if map.team1_round_score != nil || map.team2_round_score != nil {
-                    Text("\(map.team1_round_score ?? 0)-\(map.team2_round_score ?? 0)")
+                if let team1Score = map.team1_round_score,
+                   let team2Score = map.team2_round_score {
+                    Text("\(team1Score)-\(team2Score)")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.white.opacity(0.54))
                 }
@@ -322,17 +398,10 @@ struct GameDetailView: View {
                     .padding(.top, 12)
             }
 
-            if isLoadingStats {
-                ProgressView()
-                    .tint(selectedAccentColor)
-                    .padding(.top, 28)
-            } else if let statsError {
-                Text(statsError)
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-                    .padding(.top, 28)
+            if detailState.phase.isLoading {
+                loadingStatsView(label: "Loading player stats…", topPadding: 28)
+            } else if let message = detailState.phase.errorMessage {
+                statsErrorView(message: message, topPadding: 28)
             } else if players.isEmpty {
                 Text("No player stats available yet.")
                     .font(.subheadline)
@@ -342,18 +411,21 @@ struct GameDetailView: View {
                 ForEach(players) { player in
                     PlayerStatRowView(
                         playerName: player.name,
-                        role: player.role.isEmpty ? player.team : player.role,
+                        subtitle: player.team_abbreviation.isEmpty
+                            ? "Team abbreviation unavailable"
+                            : player.team_abbreviation,
                         kills: player.kills,
                         deaths: player.deaths,
                         assists: player.assists,
+                        kd: player.kd,
                         plusMinus: player.plus_minus,
                         kast: player.kast,
                         adr: player.adr,
                         acs: player.acs,
                         firstKills: player.first_kills,
                         firstDeaths: player.first_deaths,
-                        accentColor: selectedTab == match.team2 ? team2Color : team1Color,
-                        opposingColor: selectedTab == match.team2 ? team1Color : team2Color
+                        accentColor: selectedTab == .team2 ? team2Color : team1Color,
+                        opposingColor: selectedTab == .team2 ? team1Color : team2Color
                     )
                 }
             }
@@ -399,30 +471,21 @@ struct GameDetailView: View {
     private func selectMap(_ map: MapStatInfo) {
         guard selectedGameId != map.game_id else { return }
 
+        detailState.invalidatePendingRequest()
         selectedGameId = map.game_id
     }
 
-    private func fetchStats() async {
-        isLoadingStats = true
-        statsError = nil
+    private func retryStats() {
+        detailState.invalidatePendingRequest()
+        requestRevision += 1
+    }
 
-        do {
-            let decodedStats = try await dataManager.matchDetails(
+    private func fetchStats(for gameID: String) async {
+        await detailState.load(gameID: gameID) {
+            try await dataManager.matchDetails(
                 matchID: match.id,
-                gameID: selectedGameId
+                gameID: gameID
             )
-            try Task.checkCancellation()
-
-            stats = decodedStats
-            selectedGameId = decodedStats.match_info.selected_game_id
-            isLoadingStats = false
-        } catch let error as APIClientError where error.isCancelled {
-            return
-        } catch is CancellationError {
-            return
-        } catch {
-            statsError = error.localizedDescription
-            isLoadingStats = false
         }
     }
 

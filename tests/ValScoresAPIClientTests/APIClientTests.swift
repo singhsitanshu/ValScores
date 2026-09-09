@@ -82,7 +82,10 @@ struct APIClientTests {
                     status: 200,
                     body: """
                     {"match_info":{"team1":"Alpha","team2":"Bravo","map_vetoes":[],
-                    "selected_game_id":"map-2","maps":[]},"team1_roster":[],"team2_roster":[]}
+                    "selected_game_id":"map-2","maps":[]},"team1_roster":[{"name":"Ace",
+                    "team":"Alpha","team_abbreviation":"ALP","acs":245,"kd":1.5,
+                    "adr":160,"kills":21,"deaths":14,"assists":7,"plus_minus":"+7",
+                    "kast":"78%","first_kills":4,"first_deaths":1}],"team2_roster":[]}
                     """
                 )
             }
@@ -105,6 +108,8 @@ struct APIClientTests {
 
         let details = try await client.matchDetails(matchID: 42, gameID: "map-2")
         require(details.match_info.selected_game_id == "map-2", "details decoding")
+        require(details.team1_roster.first?.team_abbreviation == "ALP", "team abbreviation decoding")
+        require(details.team1_roster.first?.kd == 1.5, "KD decoding")
         let refresh = try await client.refresh(
             parameters: RefreshParameters(limit: 10, detailsLimit: 3, resultsLimit: 20)
         )

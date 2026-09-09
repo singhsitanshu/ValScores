@@ -192,6 +192,9 @@ class APIContractTests(unittest.TestCase):
         self.assertEqual([player["name"] for player in payload["team2_roster"]], ["Bolt"])
         self.assertEqual(payload["team1_roster"][0]["team"], "Alpha Five")
         self.assertEqual(payload["team2_roster"][0]["team"], "Bravo Crew")
+        self.assertEqual(payload["team1_roster"][0]["team_abbreviation"], "AF")
+        self.assertEqual(payload["team2_roster"][0]["team_abbreviation"], "UNRELATED")
+        self.assertEqual(payload["team1_roster"][0]["role"], "duelist")
         for key in ("acs", "kd", "adr", "kills", "deaths", "assists"):
             self.assertIsNotNone(payload["team2_roster"][0][key])
 
@@ -237,6 +240,9 @@ class APIContractTests(unittest.TestCase):
 
         self.assertEqual(timeline_schema["items"]["$ref"], "#/components/schemas/TimelineMatchResponse")
         self.assertEqual(stats_schema["$ref"], "#/components/schemas/MatchStatsResponse")
+        player_properties = schema["components"]["schemas"]["PlayerStatResponse"]["properties"]
+        self.assertIn("team_abbreviation", player_properties)
+        self.assertIn("role", player_properties)
         self.assertIn("post", refresh_path)
         self.assertNotIn("get", refresh_path)
 

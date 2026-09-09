@@ -2,10 +2,11 @@ import SwiftUI
 
 struct PlayerStatRowView: View {
     var playerName: String
-    var role: String
+    var subtitle: String
     var kills: Int
     var deaths: Int
     var assists: Int
+    var kd: Double
     var plusMinus: String
     var kast: String
     var adr: Int
@@ -18,6 +19,7 @@ struct PlayerStatRowView: View {
     private var statColumns: [(label: String, value: String)] {
         [
             ("KDA", "\(kills)/\(deaths)/\(assists)"),
+            ("KD", kd.formatted(.number.precision(.fractionLength(2)))),
             ("+/-", plusMinus),
             ("KAST", kast),
             ("ADR", "\(adr)"),
@@ -34,7 +36,7 @@ struct PlayerStatRowView: View {
                     .font(.system(size: 16, weight: .bold))
                     .foregroundColor(.white)
                 
-                Text(role)
+                Text(subtitle)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white.opacity(0.54))
             }

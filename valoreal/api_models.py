@@ -44,6 +44,7 @@ class MapStatResponse(APIModel):
 class PlayerStatResponse(APIModel):
     name: str
     team: str
+    team_abbreviation: str
     role: str
     acs: int
     kd: float

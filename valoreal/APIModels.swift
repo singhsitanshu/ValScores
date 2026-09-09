@@ -24,10 +24,10 @@ struct MapStatInfo: Decodable, Identifiable {
 }
 
 struct PlayerStatInfo: Decodable, Identifiable {
-    var id: String { "\(team)-\(name)" }
+    var id: String { "\(team)-\(team_abbreviation)-\(name)" }
     let name: String
     let team: String
-    let role: String
+    let team_abbreviation: String
     let acs: Int
     let kd: Double
     let adr: Int

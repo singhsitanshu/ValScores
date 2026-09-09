@@ -108,4 +108,6 @@ swiftc -parse-as-library valoreal/MatchTimeContract.swift valoreal/APIModels.swi
 /tmp/valscores-api-client-tests
 swiftc -parse-as-library valoreal/MatchTimeContract.swift valoreal/APIModels.swift valoreal/APIClient.swift valoreal/VLRDataManager.swift tests/ValScoresTimelineStateTests/TimelineStateTests.swift -o /tmp/valscores-timeline-state-tests
 /tmp/valscores-timeline-state-tests
+swiftc -parse-as-library valoreal/MatchTimeContract.swift valoreal/APIModels.swift valoreal/APIClient.swift valoreal/MatchDetailState.swift tests/ValScoresMatchDetailTests/MatchDetailStateTests.swift -o /tmp/valscores-match-detail-tests
+/tmp/valscores-match-detail-tests
 ```

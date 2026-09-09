@@ -2,12 +2,16 @@ import SwiftUI
 
 struct DateScrollerView: View {
     @Binding var selectedDate: Date
+    let referenceDate: Date
+
+    private var calendar: Calendar {
+        .autoupdatingCurrent
+    }
     
     // Dynamically generates a 7-day window around today
     var dynamicDates: [Date] {
         var dates: [Date] = []
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
+        let today = calendar.startOfDay(for: referenceDate)
         
         // Generate 3 days ago up to 3 days in the future
         for i in -3...3 {
@@ -23,7 +27,7 @@ struct DateScrollerView: View {
             // Use ScrollViewReader if you want it to auto-scroll to the center later!
             HStack(spacing: 24) {
                 ForEach(dynamicDates, id: \.self) { date in
-                    let isSelected = Calendar.current.isDate(date, inSameDayAs: selectedDate)
+                    let isSelected = calendar.isDate(date, inSameDayAs: selectedDate)
                     
                     VStack(spacing: 4) {
                         Text(date.formatted(.dateTime.month(.abbreviated).day()))
@@ -52,7 +56,10 @@ struct DateScrollerView_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            DateScrollerView(selectedDate: .constant(Date()))
+            DateScrollerView(
+                selectedDate: .constant(Date()),
+                referenceDate: Date()
+            )
         }
     }
 }

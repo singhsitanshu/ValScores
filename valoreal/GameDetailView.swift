@@ -1,63 +1,10 @@
 import SwiftUI
 
-struct MatchStatsResponse: Codable {
-    let match_info: MatchStatsInfo
-    let team1_roster: [PlayerStatInfo]
-    let team2_roster: [PlayerStatInfo]
-}
-
-struct MatchStatsInfo: Codable {
-    let team1: String
-    let team2: String
-    let map_vetoes: [String]
-    let selected_game_id: String
-    let maps: [MapStatInfo]
-}
-
-struct MapStatInfo: Codable, Identifiable {
-    var id: String { game_id }
-    let game_id: String
-    let map_number: Int
-    let map_name: String
-    let team1_round_score: Int?
-    let team2_round_score: Int?
-}
-
-struct PlayerStatInfo: Codable, Identifiable {
-    var id: String { "\(team)-\(name)" }
-    let name: String
-    let team: String
-    let role: String
-    let acs: Int
-    let kd: Double
-    let adr: Int
-    let kills: Int
-    let deaths: Int
-    let assists: Int
-    let plus_minus: String
-    let kast: String
-    let first_kills: Int
-    let first_deaths: Int
-}
-
-private struct APIErrorResponse: Decodable {
-    let error: APIErrorDetail
-}
-
-private struct APIErrorDetail: Decodable {
-    let code: String
-    let message: String
-}
-
-private struct StatsRequestError: LocalizedError {
-    let message: String
-
-    var errorDescription: String? { message }
-}
-
 struct GameDetailView: View {
     // 櫨 NEW: Pass the clicked match into this view
     let match: MatchInfo
+
+    @EnvironmentObject private var dataManager: VLRDataManager
     
     @State private var selectedTab = "Game"
     @State private var stats: MatchStatsResponse?
@@ -164,7 +111,7 @@ struct GameDetailView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .navigationBarTitleDisplayMode(.inline)
-        .task {
+        .task(id: selectedGameId) {
             await fetchStats()
         }
     }
@@ -453,45 +400,29 @@ struct GameDetailView: View {
         guard selectedGameId != map.game_id else { return }
 
         selectedGameId = map.game_id
-        Task { await fetchStats(force: true) }
     }
 
-    private func fetchStats(force: Bool = false) async {
-        guard !isLoadingStats || force else { return }
-
-        var components = URLComponents(string: "http://127.0.0.1:8000/api/matches/\(match.id)/stats")
-        components?.queryItems = [
-            URLQueryItem(name: "game_id", value: selectedGameId)
-        ]
-
-        guard let url = components?.url else { return }
-
-        await MainActor.run {
-            isLoadingStats = true
-            statsError = nil
-        }
+    private func fetchStats() async {
+        isLoadingStats = true
+        statsError = nil
 
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            guard
-                let httpResponse = response as? HTTPURLResponse,
-                (200..<300).contains(httpResponse.statusCode)
-            else {
-                let apiError = try? JSONDecoder().decode(APIErrorResponse.self, from: data)
-                throw StatsRequestError(message: apiError?.error.message ?? "Could not load player stats.")
-            }
-            let decodedStats = try JSONDecoder().decode(MatchStatsResponse.self, from: data)
+            let decodedStats = try await dataManager.matchDetails(
+                matchID: match.id,
+                gameID: selectedGameId
+            )
+            try Task.checkCancellation()
 
-            await MainActor.run {
-                stats = decodedStats
-                selectedGameId = decodedStats.match_info.selected_game_id
-                isLoadingStats = false
-            }
+            stats = decodedStats
+            selectedGameId = decodedStats.match_info.selected_game_id
+            isLoadingStats = false
+        } catch let error as APIClientError where error.isCancelled {
+            return
+        } catch is CancellationError {
+            return
         } catch {
-            await MainActor.run {
-                statsError = error.localizedDescription
-                isLoadingStats = false
-            }
+            statsError = error.localizedDescription
+            isLoadingStats = false
         }
     }
 

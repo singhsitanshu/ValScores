@@ -30,7 +30,7 @@ struct GamesListView: View {
                 }
             }
         }
-        .onChange(of: selectedDate) { newDate in
+        .onChange(of: selectedDate) { _, newDate in
             dataManager.filterMatches(for: newDate)
         }
         // ⏱ AUTO REFRESH
@@ -63,7 +63,13 @@ struct GamesListView: View {
             ProgressView()
                 .tint(Color(red: 0.4, green: 0.2, blue: 0.9))
                 .padding(.top, 50)
-                
+        } else if let errorMessage = dataManager.errorMessage,
+                  dataManager.allMatches.isEmpty {
+            Text(errorMessage)
+                .foregroundColor(.gray)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+                .padding(.top, 50)
         } else if dataManager.filteredMatches.isEmpty {
             Text("No games found in database.")
                 .foregroundColor(.gray)

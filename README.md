@@ -74,6 +74,29 @@ enabled for every application connection.
 Timeline scores and map round scores are JSON integers or `null`. Player-stat
 numeric fields always contain a number; unavailable values are serialized as zero.
 
+## iOS backend configuration
+
+All app requests go through `APIClient`. Its base URL is resolved once using the
+first non-empty value from:
+
+1. the `VALSCORES_API_BASE_URL` Xcode scheme environment variable;
+2. the `VALSCORES_API_BASE_URL` user default (which can be supplied as an Xcode
+   launch argument: `-VALSCORES_API_BASE_URL http://192.168.1.20:8000`);
+3. the `VALSCORES_API_BASE_URL` value in `valoreal/Info.plist`;
+4. the simulator default, `http://127.0.0.1:8000`.
+
+For the iOS Simulator, start the backend with the documented localhost command.
+For a physical iPhone, put the Mac and phone on the same LAN, replace the sample
+address below with the Mac's LAN IP, and start Uvicorn on all interfaces:
+
+```bash
+python -m uvicorn valoreal.api:app --reload --host 0.0.0.0 --port 8000
+```
+
+Then set the scheme environment variable or launch argument described above. The
+committed Info.plist contains the local-network permission required for this V1
+development setup. No view or data manager needs to be edited when the host changes.
+
 ## Tests
 
 ```bash
@@ -81,4 +104,6 @@ python -m pip install -e '.[test]'
 PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -p 'test_*.py' -v
 swiftc -parse-as-library valoreal/MatchTimeContract.swift tests/ValScoresTimeContractTests/MatchTimeContractTests.swift -o /tmp/valscores-time-contract-tests
 /tmp/valscores-time-contract-tests
+swiftc -parse-as-library valoreal/MatchTimeContract.swift valoreal/APIModels.swift valoreal/APIClient.swift tests/ValScoresAPIClientTests/APIClientTests.swift -o /tmp/valscores-api-client-tests
+/tmp/valscores-api-client-tests
 ```

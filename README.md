@@ -44,6 +44,20 @@ No manual database command or Python source edit is required for a clean checkou
 Automated tests can isolate database state by setting `VALSCORES_DATABASE_PATH` to
 an alternate SQLite file.
 
+### Repository data policy
+
+The runtime database is local, mutable application state and is intentionally not
+tracked by Git. A clean checkout starts without a database; importing or starting
+the backend creates an empty `valoreal/valorant_stats.db` and applies all migrations.
+SQLite sidecars such as `-wal`, `-shm`, and `-journal` files are also ignored.
+
+There is no authoritative SQLite seed snapshot. Optional deterministic sample data
+belongs under `tests/fixtures/sample/` in a reviewable text format such as JSON.
+Frozen scraper inputs live under `tests/fixtures/` as intentionally tracked
+`vlr_*.html` files. Tests must write temporary databases outside the repository or
+through `VALSCORES_DATABASE_PATH`; backend refreshes only update the ignored runtime
+database.
+
 Schema changes use ordered, transactional migrations recorded in SQLite's
 `PRAGMA user_version`. Startup applies each pending version once. Version 2
 canonicalizes legacy match IDs, preserves and merges duplicate data, and enforces

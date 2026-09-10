@@ -1,4 +1,59 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python environments, caches, and build outputs
 .venv/
+venv/
+ENV/
 *.egg-info/
 __pycache__/
 *.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+
+# Xcode and Swift user-local/generated state
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+DerivedData/
+.build/
+.swiftpm/
+*.xcresult/
+*.dSYM/
+
+# Local runtime databases and SQLite sidecars
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.sqlite3-journal
+
+# Temporary development output
+*.log
+*.tmp
+*.temp
+*.profraw
+*.profdata
+*.swp
+*~
+.tmp/
+tmp/

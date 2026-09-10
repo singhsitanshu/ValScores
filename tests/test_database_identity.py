@@ -110,6 +110,47 @@ class DatabaseIdentityTests(unittest.TestCase):
         finally:
             session.close()
 
+    def test_authoritative_save_removes_stale_games_and_players(self):
+        initial = details_payload()
+        initial["games"][0]["player_stats"].append(
+            {
+                **initial["games"][0]["player_stats"][0],
+                "player": "Bolt",
+                "team": "BRV",
+            }
+        )
+        initial["games"].append(
+            {
+                "game_id": "map-2",
+                "map_number": 2,
+                "map_name": "Pearl",
+                "team1_round_score": "13",
+                "team2_round_score": "7",
+                "player_stats": [
+                    {
+                        **initial["games"][0]["player_stats"][0],
+                        "player": "Cache",
+                    }
+                ],
+            }
+        )
+        initial["stats_status"] = "available"
+        vlreal.save_to_database(match_payload(status="Finished"), initial)
+
+        corrected = details_payload(stats_status="available")
+        corrected["games"][0]["player_stats"][0]["kills"] = "24"
+        vlreal.save_to_database(match_payload(status="Finished"), corrected)
+
+        session = self.session_factory()
+        try:
+            games = session.query(Game).all()
+            players = session.query(PlayerStat).all()
+            self.assertEqual([game.vlr_game_id for game in games], ["game-1"])
+            self.assertEqual([player.player_name for player in players], ["Ace"])
+            self.assertEqual(players[0].kills, 24)
+        finally:
+            session.close()
+
     def test_upcoming_match_updates_to_live_without_duplication(self):
         vlreal.save_to_database(match_payload(), {})
         vlreal.save_to_database(

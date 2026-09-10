@@ -178,18 +178,36 @@ class VlrHttpTests(unittest.TestCase):
         matches = VlrScraper(session=session).get_results()
         self.assertEqual(matches[0]["status"], "finished")
 
-    def test_http_failure_is_wrapped_and_propagated(self):
-        error = requests.HTTPError("503 Server Error")
-        session = FakeSession(response=FakeResponse("upstream down", error=error))
+    def test_404_429_and_500_failures_are_wrapped_and_propagated(self):
+        for status_code, reason in (
+            (404, "Not Found"),
+            (429, "Too Many Requests"),
+            (500, "Server Error"),
+        ):
+            with self.subTest(status_code=status_code):
+                error = requests.HTTPError(f"{status_code} {reason}")
+                session = FakeSession(
+                    response=FakeResponse("upstream failure", error=error)
+                )
 
-        with self.assertRaisesRegex(VlrUpstreamError, "503 Server Error"):
-            VlrScraper(session=session).get_matches()
+                with self.assertRaisesRegex(VlrUpstreamError, str(status_code)):
+                    VlrScraper(session=session).get_matches()
 
     def test_transport_failure_is_wrapped_and_propagated(self):
         session = FakeSession(error=requests.Timeout("read timed out"))
 
         with self.assertRaisesRegex(VlrUpstreamError, "read timed out"):
             VlrScraper(session=session).get_matches()
+
+    def test_malformed_fetched_html_is_rejected_without_network_access(self):
+        session = FakeSession(
+            response=FakeResponse("<html><body>maintenance</body></html>")
+        )
+
+        with self.assertRaisesRegex(MatchListParseError, "no match cards"):
+            VlrScraper(session=session).get_matches()
+
+        self.assertEqual(len(session.calls), 1)
 
 
 if __name__ == "__main__":

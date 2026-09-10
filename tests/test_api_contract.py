@@ -198,6 +198,65 @@ class APIContractTests(unittest.TestCase):
         for key in ("acs", "kd", "adr", "kills", "deaths", "assists"):
             self.assertIsNotNone(payload["team2_roster"][0][key])
 
+    def test_nullable_scores_and_empty_stats_follow_the_typed_contract(self):
+        session = self.session_factory()
+        try:
+            upcoming_match = Match(
+                vlr_match_id="/105",
+                team1_name="Future Alpha",
+                team2_name="Future Bravo",
+                start_time="2026-09-07T18:00:00Z",
+                status="upcoming",
+            )
+            empty_game = Game(
+                match_id=1,
+                vlr_game_id="map-2",
+                map_number=2,
+                map_name="Pearl",
+                team1_round_score=None,
+                team2_round_score=None,
+            )
+            session.add_all([upcoming_match, empty_game])
+            # Column defaults preserve compatibility for normal writes. Explicitly
+            # store SQL NULL after insertion to exercise legacy/null API handling.
+            session.flush()
+            upcoming_match.team1_round_score = None
+            upcoming_match.team2_round_score = None
+            empty_game.team1_round_score = None
+            empty_game.team2_round_score = None
+            session.commit()
+        finally:
+            session.close()
+
+        timeline = self.client.get(
+            "/api/matches/timeline",
+            params=self.timeline_params(),
+        )
+        self.assertEqual(timeline.status_code, 200)
+        upcoming = next(
+            match for match in timeline.json() if match["team1"] == "Future Alpha"
+        )
+        for key in (
+            "team1_score",
+            "team2_score",
+            "team1_round_score",
+            "team2_round_score",
+        ):
+            self.assertIsNone(upcoming[key])
+
+        stats = self.client.get("/api/matches/1/stats", params={"game_id": "map-2"})
+        self.assertEqual(stats.status_code, 200)
+        payload = stats.json()
+        selected_map = next(
+            item
+            for item in payload["match_info"]["maps"]
+            if item["game_id"] == "map-2"
+        )
+        self.assertIsNone(selected_map["team1_round_score"])
+        self.assertIsNone(selected_map["team2_round_score"])
+        self.assertEqual(payload["team1_roster"], [])
+        self.assertEqual(payload["team2_roster"], [])
+
     def test_specific_missing_map_does_not_fall_back(self):
         response = self.client.get("/api/matches/1/stats", params={"game_id": "map-2"})
 
@@ -289,6 +348,45 @@ class APIContractTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["error"]["code"], "refresh_in_progress")
+
+    def test_partial_refresh_failures_are_serialized_by_the_response_model(self):
+        class PartialRefreshService:
+            def refresh(self, **_kwargs):
+                return {
+                    "status": "partial",
+                    "matches_examined": 2,
+                    "inserted": 1,
+                    "updated": 0,
+                    "unchanged": 0,
+                    "details_refreshed": 0,
+                    "failure_count": 1,
+                    "failures": [
+                        {
+                            "stage": "results_fetch",
+                            "source": "results",
+                            "error": "429 Too Many Requests",
+                        }
+                    ],
+                }
+
+        api.match_refresh_service = PartialRefreshService()
+        response = self.client.post("/api/matches/refresh")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "partial")
+        self.assertEqual(response.json()["failure_count"], 1)
+        self.assertEqual(
+            response.json()["failures"][0],
+            {
+                "stage": "results_fetch",
+                "error": "429 Too Many Requests",
+                "source": "results",
+                "vlr_match_id": None,
+                "url": None,
+                "card_index": None,
+                "href": None,
+            },
+        )
 
 
 if __name__ == "__main__":

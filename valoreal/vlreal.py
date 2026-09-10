@@ -932,8 +932,11 @@ def persist_match(match_dict, details_dict, session_factory=None):
                 db_match.team1_round_score = live_map_score[0]
                 db_match.team2_round_score = live_map_score[1]
 
+        authoritative_details = details_dict.get('stats_status') == 'available'
+        seen_game_identifiers = set()
         for game_data in games:
             game_identifier = game_data.get('game_id') or "all"
+            seen_game_identifiers.add(game_identifier)
 
             db_game = session.query(Game).filter_by(match_id=db_match.id, vlr_game_id=game_identifier).first()
             if not db_game and game_identifier == "all":
@@ -970,8 +973,16 @@ def persist_match(match_dict, details_dict, session_factory=None):
                 session,
                 db_game,
                 game_data.get('player_stats', []),
-                authoritative=details_dict.get('stats_status') == 'available',
+                authoritative=authoritative_details,
             )
+
+        if authoritative_details and seen_game_identifiers:
+            stale_games = session.query(Game).filter(
+                Game.match_id == db_match.id,
+                Game.vlr_game_id.notin_(seen_game_identifiers),
+            ).all()
+            for stale_game in stale_games:
+                session.delete(stale_game)
 
         derived_series_score = series_score_from_games(games)
         if (

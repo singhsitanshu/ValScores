@@ -97,11 +97,21 @@ Then set the scheme environment variable or launch argument described above. The
 committed Info.plist contains the local-network permission required for this V1
 development setup. No view or data manager needs to be edited when the host changes.
 
-## Tests
+## Backend regression suite
 
 ```bash
 python -m pip install -e '.[test]'
 PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+The backend suite uses frozen VLR HTML fixtures and isolated temporary or in-memory
+SQLite databases. It does not require VLR or any other network service to be online.
+It covers list and detail parsing, persistence and migrations, typed API contracts,
+refresh concurrency, and representative upstream failures.
+
+## iOS unit tests
+
+```bash
 swiftc -parse-as-library valoreal/MatchTimeContract.swift tests/ValScoresTimeContractTests/MatchTimeContractTests.swift -o /tmp/valscores-time-contract-tests
 /tmp/valscores-time-contract-tests
 swiftc -parse-as-library valoreal/MatchTimeContract.swift valoreal/APIModels.swift valoreal/APIClient.swift tests/ValScoresAPIClientTests/APIClientTests.swift -o /tmp/valscores-api-client-tests

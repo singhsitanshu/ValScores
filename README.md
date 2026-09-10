@@ -111,6 +111,18 @@ refresh concurrency, and representative upstream failures.
 
 ## iOS unit tests
 
+The shared `valoreal` scheme includes the `ValScoresTests` XCTest target. Run it
+with Xcode's Test action (`Command-U`) or from the repository root with an
+installed simulator destination:
+
+```bash
+xcodebuild -project valoreal.xcodeproj -scheme valoreal -destination 'platform=iOS Simulator,name=iPhone 16e,OS=latest' test
+```
+
+These tests use an injected `URLProtocol`; neither VLR nor the Python backend
+needs to be running. The earlier portable Swift regression executables remain
+available as lightweight compiler checks:
+
 ```bash
 swiftc -parse-as-library valoreal/MatchTimeContract.swift tests/ValScoresTimeContractTests/MatchTimeContractTests.swift -o /tmp/valscores-time-contract-tests
 /tmp/valscores-time-contract-tests

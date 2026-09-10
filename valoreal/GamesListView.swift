@@ -1,6 +1,18 @@
 import SwiftUI
 import Combine
 
+struct MatchDetailRoute: Hashable {
+    let match: MatchInfo
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.match.id == rhs.match.id
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(match.id)
+    }
+}
+
 struct GamesListView: View {
     @State private var selectedDate = Date()
     @State private var dateWindowReference = Date()
@@ -34,6 +46,9 @@ struct GamesListView: View {
                         await dataManager.forceRefresh(for: selectedDate)
                     }
                 }
+            }
+            .navigationDestination(for: MatchDetailRoute.self) { route in
+                GameDetailView(match: route.match)
             }
         }
         .onChange(of: selectedDate) { _, newDate in
@@ -168,7 +183,7 @@ struct GamesListView: View {
     private var gamesList: some View {
         LazyVStack(spacing: 8) {
             ForEach(dataManager.filteredMatches) { match in
-                NavigationLink(destination: GameDetailView(match: match)) {
+                NavigationLink(value: MatchDetailRoute(match: match)) {
                     GameCardView(match: match)
                 }
                 .buttonStyle(.plain)

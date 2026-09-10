@@ -9,9 +9,21 @@ import SwiftUI
 
 @main
 struct valorealApp: App {
+    private var isRunningTests: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["VALSCORES_XCTEST"] == "1"
+            || environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCTestBundlePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
+    }
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            if isRunningTests {
+                EmptyView()
+            } else {
+                ContentView()
+            }
         }
     }
 }

@@ -12,6 +12,7 @@ from .database_setup import Match, Game, PlayerStat, engine as database_engine
 from .time_contract import (
     choose_canonical_match_timestamp,
     normalize_vlr_utc_timestamp,
+    parse_utc_datetime,
     parse_vlr_schedule_timestamp,
 )
 
@@ -829,9 +830,11 @@ def persist_match(match_dict, details_dict, session_factory=None):
             db_match = session.get(Match, database_id)
             prior_state = _match_persistence_state(db_match)
 
-        best_time = choose_canonical_match_timestamp(
-            details_dict.get('exact_time'),
-            match_dict.get('scheduled_time'),
+        best_time = parse_utc_datetime(
+            choose_canonical_match_timestamp(
+                details_dict.get('exact_time'),
+                match_dict.get('scheduled_time'),
+            )
         )
         legacy_time = None if best_time else match_dict.get('time')
         team1_name = richer_team_name(
@@ -1164,6 +1167,9 @@ def save_player_stats(session, db_game, player_stats, authoritative=False):
 
 
 if __name__ == "__main__":
+    from .database_setup import initialize_database
+
+    initialize_database(database_engine)
     scraper = VlrScraper()
     matches = scraper.get_matches()
 

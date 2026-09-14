@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import unittest
 
 from fastapi.testclient import TestClient
@@ -5,14 +6,15 @@ from sqlalchemy import event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from database_support import close_test_engine, create_test_engine
 from valoreal import api
-from valoreal.database_setup import Base, Game, Match, PlayerStat, create_sqlite_engine
+from valoreal.database_setup import Base, Game, Match, PlayerStat
 from valoreal.refresh_service import RefreshInProgressError
 
 
 class APIContractTests(unittest.TestCase):
     def setUp(self):
-        self.engine = create_sqlite_engine(
+        self.engine = create_test_engine(
             "sqlite://",
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
@@ -32,7 +34,7 @@ class APIContractTests(unittest.TestCase):
     def tearDown(self):
         api.SessionLocal = self.original_session_factory
         api.match_refresh_service = self.original_refresh_service
-        self.engine.dispose()
+        close_test_engine(self.engine)
 
     def _seed_database(self):
         session = self.session_factory()
@@ -43,7 +45,7 @@ class APIContractTests(unittest.TestCase):
                 team2_name="Bravo Crew",
                 team1_round_score="13",
                 team2_round_score="9",
-                start_time="2026-09-07T01:30:00Z",
+                start_time=datetime(2026, 9, 7, 1, 30, tzinfo=timezone.utc),
                 status="finished",
                 team1_series_score=1,
                 team2_series_score=0,
@@ -103,14 +105,14 @@ class APIContractTests(unittest.TestCase):
                         vlr_match_id="/102",
                         team1_name="At",
                         team2_name="Exclusive End",
-                        start_time="2026-09-08T05:00:00Z",
+                        start_time=datetime(2026, 9, 8, 5, 0, tzinfo=timezone.utc),
                         status="upcoming",
                     ),
                     Match(
                         vlr_match_id="/103",
                         team1_name="Outside",
                         team2_name="Window",
-                        start_time="2026-10-10T12:00:00Z",
+                        start_time=datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc),
                         status="upcoming",
                     ),
                     Match(
@@ -205,7 +207,7 @@ class APIContractTests(unittest.TestCase):
                 vlr_match_id="/105",
                 team1_name="Future Alpha",
                 team2_name="Future Bravo",
-                start_time="2026-09-07T18:00:00Z",
+                start_time=datetime(2026, 9, 7, 18, 0, tzinfo=timezone.utc),
                 status="upcoming",
             )
             empty_game = Game(

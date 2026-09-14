@@ -6,8 +6,9 @@ from pathlib import Path
 from fastapi import HTTPException
 from sqlalchemy.orm import sessionmaker
 
+from database_support import close_test_engine, create_test_engine
 from valoreal import api
-from valoreal.database_setup import Base, Game, Match, PlayerStat, create_sqlite_engine
+from valoreal.database_setup import Base, Game, Match, PlayerStat
 from valoreal.refresh_service import RefreshInProgressError, RefreshService
 from valoreal.vlreal import PersistenceOutcome, persist_match
 
@@ -104,7 +105,7 @@ class RefreshServiceTests(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
         database_path = Path(self.temporary_directory.name) / "refresh.db"
-        self.engine = create_sqlite_engine(f"sqlite:///{database_path}")
+        self.engine = create_test_engine(f"sqlite:///{database_path}")
         Base.metadata.create_all(self.engine)
         self.session_factory = sessionmaker(bind=self.engine, expire_on_commit=False)
         self.scraper = FakeScraper()
@@ -115,7 +116,7 @@ class RefreshServiceTests(unittest.TestCase):
         )
 
     def tearDown(self):
-        self.engine.dispose()
+        close_test_engine(self.engine)
         self.temporary_directory.cleanup()
 
     def database_counts(self):

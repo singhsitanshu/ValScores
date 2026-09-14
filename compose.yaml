@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: valscores
+      POSTGRES_USER: valscores
+      POSTGRES_PASSWORD: valscores
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U valscores -d valscores"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+    volumes:
+      - valscores-postgres:/var/lib/postgresql/data
+
+volumes:
+  valscores-postgres:

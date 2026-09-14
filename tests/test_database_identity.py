@@ -1,12 +1,14 @@
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
+from database_support import TEST_DATABASE_URL, close_test_engine, create_test_engine
 from valoreal import vlreal
 from valoreal.database_setup import Game, Match, PlayerStat, create_sqlite_engine
 from valoreal.migrations import LATEST_SCHEMA_VERSION, run_migrations
@@ -65,15 +67,16 @@ class DatabaseIdentityTests(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
         database_path = Path(self.temporary_directory.name) / "test.db"
-        self.engine = create_sqlite_engine(f"sqlite:///{database_path}")
-        run_migrations(self.engine)
+        self.engine = create_test_engine(f"sqlite:///{database_path}")
+        if not TEST_DATABASE_URL:
+            run_migrations(self.engine)
         self.session_factory = sessionmaker(bind=self.engine, expire_on_commit=False)
         self.original_session_factory = vlreal.Session
         vlreal.Session = self.session_factory
 
     def tearDown(self):
         vlreal.Session = self.original_session_factory
-        self.engine.dispose()
+        close_test_engine(self.engine)
         self.temporary_directory.cleanup()
 
     def counts(self):
@@ -91,6 +94,17 @@ class DatabaseIdentityTests(unittest.TestCase):
         vlreal.save_to_database(match_payload(), {})
         vlreal.save_to_database(match_payload(), {})
         self.assertEqual(self.counts(), (1, 0, 0))
+
+    def test_utc_timestamp_round_trips_as_an_aware_datetime(self):
+        vlreal.save_to_database(match_payload(), {})
+
+        session = self.session_factory()
+        try:
+            stored = session.query(Match).one().start_time
+            self.assertEqual(stored, datetime(2026, 9, 6, 13, 0, tzinfo=timezone.utc))
+            self.assertIsNotNone(stored.tzinfo)
+        finally:
+            session.close()
 
     def test_repeated_same_game_save_is_idempotent(self):
         vlreal.save_to_database(match_payload(), details_payload())
@@ -211,8 +225,9 @@ class DatabaseIdentityTests(unittest.TestCase):
         self.assertEqual(self.counts(), (0, 0, 0))
 
     def test_foreign_keys_are_enforced_and_delete_cascades(self):
-        with self.engine.connect() as connection:
-            self.assertEqual(connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one(), 1)
+        if self.engine.dialect.name == "sqlite":
+            with self.engine.connect() as connection:
+                self.assertEqual(connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one(), 1)
 
         session = self.session_factory()
         session.add(Game(match_id=999, vlr_game_id="orphan", map_name="Haven"))

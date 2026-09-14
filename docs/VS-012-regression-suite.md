@@ -1,8 +1,9 @@
 # VS-012 backend regression-suite coverage
 
-The suite is intentionally offline. Scraper tests read HTML from `tests/fixtures`,
-HTTP tests use an injected fake session, persistence tests use temporary SQLite
-files, and API tests use an isolated in-memory SQLite database.
+The suite is intentionally offline from VLR. Scraper tests read HTML from
+`tests/fixtures` and HTTP tests use an injected fake session. Persistence, refresh,
+and API tests use PostgreSQL when `TEST_DATABASE_URL` is set; otherwise they retain
+an isolated SQLite fast-feedback mode. Historical migration cases are SQLite-only.
 
 | Area | Regression coverage |
 | --- | --- |
@@ -16,6 +17,13 @@ Run the complete backend safety net from the repository root:
 
 ```bash
 python -m pip install -e '.[test]'
+PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+Canonical database verification uses:
+
+```bash
+TEST_DATABASE_URL='postgresql+psycopg://valscores:valscores@localhost:5432/valscores' \
 PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 

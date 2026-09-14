@@ -6,6 +6,7 @@ ValScores includes an iOS client and a local FastAPI backend. This document cove
 
 - Git
 - Python 3.12 or 3.13; Python 3.12 is the development baseline recorded in `.python-version`
+- PostgreSQL 17 (the included Compose service is the supported development setup)
 
 Run all commands below from the repository root.
 
@@ -22,6 +23,17 @@ python -m pip install -e .
 
 The editable install reads the pinned runtime dependencies from `pyproject.toml`. No separate requirements file or manual `PYTHONPATH` configuration is needed.
 
+Start PostgreSQL and configure the backend connection:
+
+```bash
+docker compose up -d db
+export DATABASE_URL='postgresql+psycopg://valscores:valscores@localhost:5432/valscores'
+```
+
+`DATABASE_URL` is required. Tests may use `TEST_DATABASE_URL` to override it with
+a dedicated PostgreSQL database. Credentials are supplied through environment
+configuration and are not embedded in Python source.
+
 ## Start the backend
 
 ```bash
@@ -32,43 +44,35 @@ The API is available at <http://127.0.0.1:8000>. FastAPI's interactive OpenAPI d
 
 Stop the development server with `Ctrl-C`.
 
-## SQLite database
+## PostgreSQL database
 
-Importing the backend creates any missing tables and applies the application's existing lightweight column initialization automatically. The SQLite database is always read from and created at:
+PostgreSQL is the canonical development and runtime database. Starting the FastAPI
+application creates the current SQLAlchemy schema when the configured database is
+empty. You can initialize it explicitly without starting the server:
 
-```text
-valoreal/valorant_stats.db
+```bash
+python -m valoreal.database_setup
 ```
 
-No manual database command or Python source edit is required for a clean checkout.
-Automated tests can isolate database state by setting `VALSCORES_DATABASE_PATH` to
-an alternate SQLite file.
+Runtime startup never reads, copies, migrates, or deletes
+`valoreal/valorant_stats.db`. The historical SQLite migration code remains only for
+isolated compatibility tests and an explicit legacy migration entry point; SQLite
+is not a supported runtime backend.
 
 ### Repository data policy
 
-The runtime database is local, mutable application state and is intentionally not
-tracked by Git. A clean checkout starts without a database; importing or starting
-the backend creates an empty `valoreal/valorant_stats.db` and applies all migrations.
-SQLite sidecars such as `-wal`, `-shm`, and `-journal` files are also ignored.
-
-There is no authoritative SQLite seed snapshot. Optional deterministic sample data
-belongs under `tests/fixtures/sample/` in a reviewable text format such as JSON.
-Frozen scraper inputs live under `tests/fixtures/` as intentionally tracked
-`vlr_*.html` files. Tests must write temporary databases outside the repository or
-through `VALSCORES_DATABASE_PATH`; backend refreshes only update the ignored runtime
-database.
-
-Schema changes use ordered, transactional migrations recorded in SQLite's
-`PRAGMA user_version`. Startup applies each pending version once. Version 2
-canonicalizes legacy match IDs, preserves and merges duplicate data, and enforces
-logical uniqueness plus cascading foreign keys. SQLite foreign-key enforcement is
-enabled for every application connection.
+The database is mutable local state and is intentionally not tracked by Git. There
+is no authoritative SQLite seed snapshot and the stale local `.db` file is not a
+source of truth. Optional deterministic sample data belongs under
+`tests/fixtures/sample/` in a reviewable text format such as JSON. Frozen scraper
+inputs remain under `tests/fixtures/`.
 
 ## Match timestamp contract
 
 - VLR's exact `data-utc-ts` value is preferred and normalized to ISO-8601 UTC.
 - The unauthenticated VLR list page is parsed using its America/Chicago display timezone only as a fallback.
-- `matches.start_time` stores canonical values such as `2026-09-06T13:00:00Z`.
+- `matches.start_time` is PostgreSQL `TIMESTAMP WITH TIME ZONE`; SQLAlchemy exposes
+  an aware UTC `datetime` and the API emits values such as `2026-09-06T13:00:00Z`.
 - Ambiguous legacy values are moved to `matches.legacy_start_time`; they are not guessed or returned as canonical timestamps.
 - The timeline API returns `start_time` as an ISO-8601 UTC string or `null`.
 - Swift decodes `start_time` into `Date` and uses the device's current `Calendar` and timezone for grouping and display.
@@ -79,7 +83,7 @@ enabled for every application connection.
   parameters. The interval is start-inclusive, end-exclusive, and limited to 31 days.
 - `GET /api/matches/{match_id}/stats?game_id=all` reads only persisted data.
   Supplying a specific game ID selects that exact game or returns `404`.
-- Both GET endpoints are read-only: they never scrape VLR or mutate SQLite.
+- Both GET endpoints are read-only: they never scrape VLR or mutate PostgreSQL.
 - `POST /api/matches/refresh` is the only endpoint that fetches and persists
   external match data. Its `limit`, `details_limit`, and `results_limit` query
   parameters are bounded and documented in OpenAPI.
@@ -115,13 +119,28 @@ development setup. No view or data manager needs to be edited when the host chan
 
 ```bash
 python -m pip install -e '.[test]'
+```
+
+For fast feedback, the suite defaults to isolated SQLite databases:
+
+```bash
 PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-The backend suite uses frozen VLR HTML fixtures and isolated temporary or in-memory
-SQLite databases. It does not require VLR or any other network service to be online.
-It covers list and detail parsing, persistence and migrations, typed API contracts,
-refresh concurrency, and representative upstream failures.
+For canonical persistence and API verification, point `TEST_DATABASE_URL` at a
+disposable PostgreSQL database. Each database-backed test creates a unique schema,
+so it does not truncate or drop existing schemas:
+
+```bash
+TEST_DATABASE_URL='postgresql+psycopg://valscores:valscores@localhost:5432/valscores' \
+PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+Both modes use frozen VLR HTML and require no upstream network access. The suite
+covers list/detail parsing, persistence identity and rollback, constraints and
+cascades, UTC timestamps, typed API contracts, refresh transitions/concurrency,
+and representative partial failures. SQLite-only legacy migration tests remain to
+document the historical data format; they are not part of runtime startup.
 
 ## iOS unit tests
 

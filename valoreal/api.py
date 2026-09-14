@@ -1,5 +1,6 @@
 """Client-facing FastAPI routes for timeline, statistics, and explicit refreshes."""
 
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import json
 import re
@@ -20,9 +21,9 @@ from .api_models import (
     RefreshResponse,
     TimelineMatchResponse,
 )
-from .database_setup import Game, Match, engine as database_engine
+from .database_setup import Game, Match, engine as database_engine, initialize_database
 from .refresh_service import RefreshInProgressError, RefreshService
-from .time_contract import format_utc_timestamp, parse_utc_datetime
+from .time_contract import parse_utc_datetime
 from .vlreal import (
     MATCH_STATUS_FINISHED,
     MATCH_STATUS_LIVE,
@@ -39,7 +40,13 @@ ERROR_RESPONSES = {
     422: {"model": ErrorResponse},
 }
 
-app = FastAPI(title="ValScores API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    initialize_database(database_engine)
+    yield
+
+
+app = FastAPI(title="ValScores API", version="1.0.0", lifespan=lifespan)
 
 engine = database_engine
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -400,8 +407,8 @@ def get_timeline(
             .options(selectinload(Match.games))
             .filter(
                 Match.start_time.is_not(None),
-                Match.start_time >= format_utc_timestamp(start_utc),
-                Match.start_time < format_utc_timestamp(end_utc),
+                Match.start_time >= start_utc,
+                Match.start_time < end_utc,
             )
             .order_by(Match.start_time, Match.id)
             .all()

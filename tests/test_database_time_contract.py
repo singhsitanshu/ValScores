@@ -14,7 +14,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 def run_isolated_backend(database_path: Path, source: str) -> subprocess.CompletedProcess:
     environment = os.environ.copy()
-    environment["VALSCORES_DATABASE_PATH"] = str(database_path)
+    environment["DATABASE_URL"] = f"sqlite:///{database_path}"
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     return subprocess.run(
         [sys.executable, "-c", textwrap.dedent(source)],
@@ -78,7 +78,9 @@ class DatabaseTimeContractTests(unittest.TestCase):
 
                 from valoreal import api
                 from valoreal.api_models import TimelineMatchResponse
-                from valoreal.database_setup import Match
+                from valoreal.database_setup import Match, initialize_database
+
+                initialize_database()
 
                 session = api.SessionLocal()
                 session.add_all([
@@ -86,14 +88,14 @@ class DatabaseTimeContractTests(unittest.TestCase):
                         vlr_match_id="/1",
                         team1_name="Alpha",
                         team2_name="Bravo",
-                        start_time="2026-09-06T13:00:00Z",
+                        start_time=datetime(2026, 9, 6, 13, 0, tzinfo=timezone.utc),
                         status="Upcoming",
                     ),
                     Match(
                         vlr_match_id="/2",
                         team1_name="Charlie",
                         team2_name="Delta",
-                        start_time="12:00 PM",
+                        start_time=None,
                         legacy_start_time="12:00 PM",
                         status="Upcoming",
                     ),

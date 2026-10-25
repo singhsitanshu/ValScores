@@ -4,6 +4,16 @@
 class VlrUpstreamError(RuntimeError):
     """Raised when VLR cannot be fetched or returns an unsuccessful response."""
 
+    def __init__(self, message, url=None, status_code=None, attempts=None):
+        super().__init__(message)
+        self.url = url
+        self.status_code = status_code
+        self.attempts = attempts
+
+
+class VlrErrorPageError(VlrUpstreamError):
+    """VLR answered successfully but served an error or bot-check page."""
+
 
 class MatchListParseError(RuntimeError):
     """Raised when a VLR list page cannot produce any trustworthy records."""

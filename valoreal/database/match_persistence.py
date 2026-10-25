@@ -253,7 +253,7 @@ def persist_match(match_dict, details_dict, session_factory=None):
         )
         db_match.status = current_status
         # 🔥 PRIORITY: Use card score (best for LIVE)
-        if match_dict.get('team1_score') and match_dict.get('team2_score'):
+        if match_dict.get('team1_score') is not None and match_dict.get('team2_score') is not None:
             try:
                 db_match.team1_series_score = int(match_dict['team1_score'])
                 db_match.team2_series_score = int(match_dict['team2_score'])
@@ -444,7 +444,10 @@ def save_player_stats(session, db_game, player_stats, authoritative=False):
         db_player.first_kills = merge_numeric('first_kills', db_player.first_kills)
         db_player.first_deaths = merge_numeric('first_deaths', db_player.first_deaths)
 
-        db_player.plus_minus = merge_value(p_data.get('plus_minus') or None, db_player.plus_minus)
+        incoming_plus_minus = p_data.get('plus_minus')
+        if incoming_plus_minus is not None:
+            incoming_plus_minus = str(incoming_plus_minus).strip() or None
+        db_player.plus_minus = merge_value(incoming_plus_minus, db_player.plus_minus)
         db_player.kast = merge_value(p_data.get('kast') or None, db_player.kast)
 
     if authoritative and seen_player_identities:

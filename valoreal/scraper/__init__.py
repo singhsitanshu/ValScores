@@ -5,6 +5,7 @@ from .errors import (
     MatchDetailParseError,
     MatchListParseError,
     MatchListParseWarning,
+    VlrErrorPageError,
     VlrUpstreamError,
 )
 from .vlr_scraper import VlrScraper
@@ -14,6 +15,7 @@ __all__ = [
     "MatchDetailParseError",
     "MatchListParseError",
     "MatchListParseWarning",
+    "VlrErrorPageError",
     "VlrScraper",
     "VlrUpstreamError",
 ]

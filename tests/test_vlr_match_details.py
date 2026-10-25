@@ -1,7 +1,7 @@
 from pathlib import Path
 import unittest
 
-from valoreal.scraper import MatchDetailParseError, VlrScraper
+from valoreal.scraper import MatchDetailParseError, VlrErrorPageError, VlrScraper
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -23,7 +23,7 @@ class VlrMatchDetailTests(unittest.TestCase):
         self.assertEqual(details["status"], "finished")
         self.assertEqual(details["team1"], "Alpha Five")
         self.assertEqual(details["team2"], "Bravo Crew")
-        self.assertEqual(details["live_score"], {"team1": "2", "team2": "0"})
+        self.assertEqual(details["live_score"], {"team1": 2, "team2": 0})
         self.assertEqual(details["stats_status"], "available")
         self.assertEqual(details["parse_warnings"], [])
         self.assertEqual(
@@ -45,11 +45,11 @@ class VlrMatchDetailTests(unittest.TestCase):
         )
         self.assertEqual(
             (haven["team1_round_score"], haven["team2_round_score"]),
-            ("13", "9"),
+            (13, 9),
         )
         self.assertEqual(
             (pearl["map_number"], pearl["map_name"], pearl["team1_round_score"], pearl["team2_round_score"]),
-            (2, "Pearl", "14", "12"),
+            (2, "Pearl", 14, 12),
         )
 
         ace = haven["player_stats"][0]
@@ -58,16 +58,16 @@ class VlrMatchDetailTests(unittest.TestCase):
             {
                 "player": "Ace",
                 "team": "AF",
-                "acs": "245",
-                "k_d": "1.67",
-                "adr": "164",
-                "kills": "20",
-                "deaths": "12",
-                "assists": "7",
+                "acs": 245,
+                "k_d": 1.67,
+                "adr": 164,
+                "kills": 20,
+                "deaths": 12,
+                "assists": 7,
                 "plus_minus": "+8",
                 "kast": "78%",
-                "first_kills": "4",
-                "first_deaths": "1",
+                "first_kills": 4,
+                "first_deaths": 1,
             },
         )
         self.assertEqual(
@@ -84,7 +84,7 @@ class VlrMatchDetailTests(unittest.TestCase):
         self.assertEqual(len(details["games"]), 1)
         game = details["games"][0]
         self.assertEqual((game["map_number"], game["map_name"]), (1, "Lotus"))
-        self.assertEqual((game["team1_round_score"], game["team2_round_score"]), ("13", "5"))
+        self.assertEqual((game["team1_round_score"], game["team2_round_score"]), (13, 5))
         self.assertEqual(len(game["player_stats"]), 2)
 
     def test_live_partial_stats_are_retained_and_warned(self):
@@ -92,7 +92,7 @@ class VlrMatchDetailTests(unittest.TestCase):
 
         self.assertEqual(details["status"], "live")
         self.assertEqual(details["stats_status"], "partial")
-        self.assertEqual(details["live_score"], {"team1": "1", "team2": "0"})
+        self.assertEqual(details["live_score"], {"team1": 1, "team2": 0})
         self.assertEqual(len(details["games"][0]["player_stats"]), 2)
         # A blank cell is unavailable (None), not a recorded zero.
         self.assertIsNone(details["games"][0]["player_stats"][1]["adr"])
@@ -108,6 +108,20 @@ class VlrMatchDetailTests(unittest.TestCase):
         self.assertEqual(details["status"], "upcoming")
         self.assertEqual(details["stats_status"], "unavailable")
         self.assertEqual(details["games"][0]["player_stats"], [])
+        # The page shows "0 - 0" for the unplayed map; that is unknown, not zero.
+        game = details["games"][0]
+        self.assertEqual((game["team1_round_score"], game["team2_round_score"]), (None, None))
+
+    def test_error_and_unrecognized_pages_fail_explicitly(self):
+        cases = [
+            (fixture("vlr_error_challenge.html"), VlrErrorPageError, "bot-check page"),
+            ("<html><body><div class='col mod-1'>Redesigned</div></body></html>",
+             MatchDetailParseError, "match-header-vs header is missing"),
+        ]
+        for html, error, message in cases:
+            with self.subTest(error=error.__name__):
+                with self.assertRaisesRegex(error, message):
+                    self.scraper.parse_match_details(html)
 
     def test_incompatible_current_markup_raises_instead_of_returning_empty(self):
         malformed = fixture("vlr_completed_multi_map.html").replace(

@@ -48,5 +48,6 @@ and rollback behavior were already expressed through SQLAlchemy.
 SQLite remains available only for fast isolated tests and explicit tests of the
 historical schema migration. The PRAGMA connection hook and `migrations.py` are not
 executed on the PostgreSQL runtime path. Set `TEST_DATABASE_URL` to run persistence,
-refresh, and API coverage against PostgreSQL; each test uses a new schema without
-clearing pre-existing schemas.
+refresh, and API coverage against a disposable PostgreSQL database whose name
+contains `test`; each test creates a new schema and drops it on teardown, without
+touching pre-existing schemas.

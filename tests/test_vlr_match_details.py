@@ -1,11 +1,10 @@
 from pathlib import Path
-import os
 import unittest
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-os.environ.setdefault("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", "sqlite://"))
+import database_support  # noqa: F401  Isolates DATABASE_URL before backend imports.
 
 from valoreal.database_setup import Base, Game, Match, PlayerStat
 from valoreal import vlreal

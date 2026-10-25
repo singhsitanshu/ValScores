@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: valscores
       POSTGRES_PASSWORD: valscores
     ports:
-      - "5432:5432"
+      - "${VALSCORES_DB_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U valscores -d valscores"]
       interval: 2s
@@ -14,6 +14,25 @@ services:
       retries: 15
     volumes:
       - valscores-postgres:/var/lib/postgresql/data
+
+  # Disposable database for the backend regression suite. Its data lives in
+  # tmpfs, so it never shares storage with `db` and is wiped on every restart.
+  test-db:
+    profiles: ["test"]
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: valscores_test
+      POSTGRES_USER: valscores
+      POSTGRES_PASSWORD: valscores
+    ports:
+      - "${VALSCORES_TEST_DB_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U valscores -d valscores_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+    tmpfs:
+      - /var/lib/postgresql/data
 
 volumes:
   valscores-postgres:

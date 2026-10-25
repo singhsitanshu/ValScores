@@ -20,10 +20,12 @@ python -m pip install -e '.[test]'
 PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-Canonical database verification uses:
+Canonical database verification uses the disposable `test-db` Compose service
+(never the development `db` service):
 
 ```bash
-TEST_DATABASE_URL='postgresql+psycopg://valscores:valscores@localhost:5432/valscores' \
+docker compose --profile test up -d --wait test-db
+TEST_DATABASE_URL='postgresql+psycopg://valscores:valscores@localhost:5433/valscores_test' \
 PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 

@@ -57,3 +57,8 @@ DerivedData/
 *~
 .tmp/
 tmp/
+
+# Local environment configuration (copy from .env.example)
+.env
+.env.*
+!.env.example

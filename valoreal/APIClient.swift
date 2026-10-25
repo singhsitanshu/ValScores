@@ -32,6 +32,12 @@ enum APIClientError: Error, LocalizedError, Sendable {
         return false
     }
 
+    /// The backend's contract error code, when the failure came from the API.
+    var serverCode: APIErrorCode? {
+        if case .server(_, let code, _) = self { return APIErrorCode(rawValue: code) }
+        return nil
+    }
+
     var errorDescription: String? {
         switch self {
         case .invalidURL:
@@ -161,7 +167,7 @@ struct APIClient {
                 throw APIClientError.transport("The response was not HTTP.")
             }
             guard (200..<300).contains(httpResponse.statusCode) else {
-                if let serverError = try? JSONDecoder().decode(ServerErrorEnvelope.self, from: data) {
+                if let serverError = try? JSONDecoder().decode(APIErrorEnvelope.self, from: data) {
                     throw APIClientError.server(
                         statusCode: httpResponse.statusCode,
                         code: serverError.error.code,
@@ -188,13 +194,4 @@ struct APIClient {
             throw APIClientError.transport(error.localizedDescription)
         }
     }
-}
-
-private struct ServerErrorEnvelope: Decodable {
-    let error: ServerErrorDetail
-}
-
-private struct ServerErrorDetail: Decodable {
-    let code: String
-    let message: String
 }

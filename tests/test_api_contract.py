@@ -168,8 +168,10 @@ class APIContractTests(unittest.TestCase):
         self.assertEqual(len(response.json()), 1)
         match = response.json()[0]
         self.assertEqual(match["start_time"], "2026-09-07T01:30:00Z")
+        self.assertEqual((match["id"], match["vlr_match_id"]), (1, "101"))
         self.assertIsInstance(match["team1_score"], int)
-        self.assertIsInstance(match["team1_round_score"], int)
+        # Round scores describe the map in progress; finished matches report null.
+        self.assertIsNone(match["team1_round_score"])
 
     def test_timeline_and_stats_gets_do_not_mutate_database_or_refresh(self):
         class ForbiddenRefreshService:
@@ -197,8 +199,11 @@ class APIContractTests(unittest.TestCase):
         self.assertEqual(payload["team1_roster"][0]["team_abbreviation"], "AF")
         self.assertEqual(payload["team2_roster"][0]["team_abbreviation"], "UNRELATED")
         self.assertEqual(payload["team1_roster"][0]["role"], "duelist")
-        for key in ("acs", "kd", "adr", "kills", "deaths", "assists"):
-            self.assertIsNotNone(payload["team2_roster"][0][key])
+        self.assertEqual(payload["team1_roster"][0]["plus_minus"], 7)
+        self.assertEqual(payload["team1_roster"][0]["kast"], 78.0)
+        # Bolt has no persisted stats: every value is unavailable, never zero.
+        for key in ("role", "acs", "kd", "adr", "kills", "deaths", "assists", "plus_minus", "kast"):
+            self.assertIsNone(payload["team2_roster"][0][key])
 
     def test_nullable_scores_and_empty_stats_follow_the_typed_contract(self):
         session = self.session_factory()

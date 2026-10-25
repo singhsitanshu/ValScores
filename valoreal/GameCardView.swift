@@ -3,9 +3,9 @@ import SwiftUI
 struct GameCardView: View {
     let match: MatchInfo
 
+    // An unknown score renders as a dash, never as a confirmed 0.
     private func displayScore(_ score: Int?) -> String {
-        guard let score else { return match.is_live ? "0" : "" }
-        return String(score)
+        score.map(String.init) ?? ""
     }
 
     private var team1PrimaryScore: String {
@@ -26,7 +26,7 @@ struct GameCardView: View {
 
     private var statusLabel: String {
         if match.is_live {
-            return match.status.isEmpty ? "LIVE" : match.status.uppercased()
+            return "LIVE"
         }
 
         if match.is_finished {
@@ -45,7 +45,7 @@ struct GameCardView: View {
             return match.displayTime
         }
 
-        return "Upcoming"
+        return match.status.displayName
     }
 
     private var statusColor: Color {

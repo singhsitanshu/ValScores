@@ -68,11 +68,11 @@ struct GameDetailView: View {
     }
 
     private func mapFilterLabel(_ map: MapStatInfo) -> String {
-        if map.game_id == "all" || map.map_number == 0 {
+        if map.isAllMaps {
             return "all"
         }
 
-        return "Map \(map.map_number)"
+        return map.map_number.map { "Map \($0)" } ?? map.map_name
     }
     
     var body: some View {
@@ -359,7 +359,7 @@ struct GameDetailView: View {
         let isSelected = map.game_id == selectedGameId
 
         return HStack(spacing: 12) {
-            Text(map.map_number == 0 ? "All" : "\(map.map_number)")
+            Text(map.isAllMaps ? "All" : map.map_number.map(String.init) ?? "–")
                 .font(.system(size: 13, weight: .bold))
                 .foregroundColor(isSelected ? .white : .white.opacity(0.54))
                 .frame(width: 34, height: 28)
@@ -531,11 +531,14 @@ private struct MatchDetailHeaderView: View {
             return "LIVE"
         }
 
-        if isUpcoming {
+        switch match.status {
+        case .upcoming:
             return match.displayTime
+        case .postponed, .cancelled, .unknown:
+            return match.status.displayName
+        case .live, .finished:
+            return nil
         }
-
-        return nil
     }
 
     var body: some View {

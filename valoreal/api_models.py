@@ -1,4 +1,8 @@
-"""Typed client-facing schemas for the ValScores API."""
+"""Typed client-facing schemas for the ValScores API.
+
+docs/API-CONTRACT.md describes these models. Every nullable field uses null to
+mean "unknown or not applicable"; a number is always a value VLR reported.
+"""
 
 from datetime import datetime
 from typing import Literal
@@ -6,13 +10,31 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+MatchStatus = Literal["upcoming", "live", "postponed", "finished", "cancelled"]
+
+ErrorCode = Literal[
+    "validation_error",
+    "invalid_range",
+    "not_found",
+    "match_not_found",
+    "game_not_found",
+    "method_not_allowed",
+    "refresh_in_progress",
+    "ambiguous_roster",
+    "http_error",
+    "internal_error",
+]
+
+ALL_MAPS_GAME_ID = "all"
+
+
 class APIModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
 class ErrorDetail(APIModel):
-    code: str
-    message: str
+    code: ErrorCode = Field(description="Stable machine-readable error code.")
+    message: str = Field(description="Human-readable explanation; not for parsing.")
 
 
 class ErrorResponse(APIModel):
@@ -20,49 +42,76 @@ class ErrorResponse(APIModel):
 
 
 class TimelineMatchResponse(APIModel):
-    id: int = Field(ge=1)
+    id: int = Field(
+        ge=1,
+        description="ValScores match ID. The only match identifier accepted by API paths.",
+    )
+    vlr_match_id: str = Field(
+        min_length=1,
+        description="Upstream VLR match ID (the number in vlr.gg/<id>/...). Informational.",
+    )
     team1: str
     team2: str
-    team1_score: int | None
-    team2_score: int | None
-    team1_round_score: int | None
-    team2_round_score: int | None
-    status: Literal["upcoming", "live", "finished"]
-    start_time: datetime | None
-    is_live: bool
-    is_finished: bool
+    team1_score: int | None = Field(
+        ge=0,
+        description="Maps won by team 1. Null unless live or finished with a known score.",
+    )
+    team2_score: int | None = Field(ge=0, description="Maps won by team 2. See team1_score.")
+    team1_round_score: int | None = Field(
+        ge=0,
+        description="Team 1 rounds on the current map. Null unless live with a known score.",
+    )
+    team2_round_score: int | None = Field(
+        ge=0,
+        description="Team 2 rounds on the current map. See team1_round_score.",
+    )
+    status: MatchStatus
+    start_time: datetime = Field(description="Scheduled start as an ISO-8601 UTC instant.")
+    is_live: bool = Field(description="Derived: status == 'live'.")
+    is_finished: bool = Field(description="Derived: status == 'finished'.")
 
 
 class MapStatResponse(APIModel):
-    game_id: str
-    map_number: int = Field(ge=0)
+    game_id: str = Field(
+        description="Upstream VLR game ID, or 'all' for the whole-series aggregate.",
+    )
+    map_number: int | None = Field(
+        ge=1,
+        description="Position in the series. Null for the 'all' aggregate or when unknown.",
+    )
     map_name: str
-    team1_round_score: int | None
-    team2_round_score: int | None
+    team1_round_score: int | None = Field(
+        ge=0,
+        description="Rounds won on this map. Null for 'all' and for unplayed maps.",
+    )
+    team2_round_score: int | None = Field(ge=0)
 
 
 class PlayerStatResponse(APIModel):
     name: str
-    team: str
-    team_abbreviation: str
-    role: str
-    acs: int
-    kd: float
-    adr: int
-    kills: int
-    deaths: int
-    assists: int
-    plus_minus: str
-    kast: str
-    first_kills: int
-    first_deaths: int
+    team: str = Field(description="Match team name (team1 or team2) this player belongs to.")
+    team_abbreviation: str = Field(description="Team label VLR shows beside the player.")
+    role: str | None
+    acs: int | None = Field(description="Average combat score. Null when unavailable.")
+    kd: float | None = Field(description="Kills / deaths. Null when either is unavailable.")
+    adr: int | None = Field(description="Average damage per round.")
+    kills: int | None
+    deaths: int | None
+    assists: int | None
+    plus_minus: int | None = Field(description="Kills minus deaths, signed.")
+    kast: float | None = Field(description="KAST as a percentage, e.g. 78.0 for 78%.")
+    first_kills: int | None
+    first_deaths: int | None
 
 
 class MatchStatsInfoResponse(APIModel):
+    match_id: int = Field(ge=1, description="ValScores match ID.")
+    vlr_match_id: str = Field(min_length=1, description="Upstream VLR match ID.")
     team1: str
     team2: str
+    status: MatchStatus
     map_vetoes: list[str]
-    selected_game_id: str
+    selected_game_id: str = Field(description="The game_id these rosters describe.")
     maps: list[MapStatResponse]
 
 

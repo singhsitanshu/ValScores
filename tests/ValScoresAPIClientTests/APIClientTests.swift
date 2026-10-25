@@ -53,7 +53,7 @@ struct APIClientTests {
                 request,
                 status: 200,
                 body: """
-                [{"id":1,"team1":"Alpha","team2":"Bravo","team1_score":null,
+                [{"id":1,"vlr_match_id":"700001","team1":"Alpha","team2":"Bravo","team1_score":null,
                 "team2_score":null,"status":"upcoming","start_time":"2026-09-07T12:00:00Z",
                 "is_live":false,"is_finished":false,"team1_round_score":null,
                 "team2_round_score":null}]
@@ -81,11 +81,12 @@ struct APIClientTests {
                     request,
                     status: 200,
                     body: """
-                    {"match_info":{"team1":"Alpha","team2":"Bravo","map_vetoes":[],
+                    {"match_info":{"match_id":42,"vlr_match_id":"700042","team1":"Alpha",
+                    "team2":"Bravo","status":"live","map_vetoes":[],
                     "selected_game_id":"map-2","maps":[]},"team1_roster":[{"name":"Ace",
-                    "team":"Alpha","team_abbreviation":"ALP","acs":245,"kd":1.5,
-                    "adr":160,"kills":21,"deaths":14,"assists":7,"plus_minus":"+7",
-                    "kast":"78%","first_kills":4,"first_deaths":1}],"team2_roster":[]}
+                    "team":"Alpha","team_abbreviation":"ALP","role":null,"acs":245,"kd":1.5,
+                    "adr":null,"kills":21,"deaths":14,"assists":0,"plus_minus":7,
+                    "kast":null,"first_kills":4,"first_deaths":1}],"team2_roster":[]}
                     """
                 )
             }

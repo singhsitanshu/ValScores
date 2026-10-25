@@ -88,7 +88,7 @@ class ValScoresTestCase: XCTestCase {
         isFinished: Bool = false
     ) -> String {
         """
-        {"id":\(id),"team1":"\(team1)","team2":"Opponent",\
+        {"id":\(id),"vlr_match_id":"\(700000 + id)","team1":"\(team1)","team2":"Opponent",\
         "team1_score":null,"team2_score":null,"status":"\(status)",\
         "start_time":"\(startTime)","is_live":\(isLive),\
         "is_finished":\(isFinished),"team1_round_score":null,\
@@ -98,18 +98,19 @@ class ValScoresTestCase: XCTestCase {
 
     func detailJSON(gameID: String = "map-1") -> String {
         """
-        {"match_info":{"team1":"Alpha Five","team2":"Bravo Crew",\
+        {"match_info":{"match_id":42,"vlr_match_id":"700042",\
+        "team1":"Alpha Five","team2":"Bravo Crew","status":"finished",\
         "map_vetoes":["Alpha ban Lotus"],"selected_game_id":"\(gameID)",\
         "maps":[{"game_id":"map-1","map_number":1,"map_name":"Haven",\
         "team1_round_score":13,"team2_round_score":9}]},\
         "team1_roster":[{"name":"Ace","team":"Alpha Five",\
-        "team_abbreviation":"AF","acs":245,"kd":1.5,"adr":160,\
-        "kills":21,"deaths":14,"assists":7,"plus_minus":"+7",\
-        "kast":"78%","first_kills":4,"first_deaths":1}],\
+        "team_abbreviation":"AF","role":"duelist","acs":245,"kd":1.5,\
+        "adr":160,"kills":21,"deaths":14,"assists":7,"plus_minus":7,\
+        "kast":78.0,"first_kills":4,"first_deaths":1}],\
         "team2_roster":[{"name":"Bolt","team":"Bravo Crew",\
-        "team_abbreviation":"BC","acs":201,"kd":0.88,"adr":138,\
-        "kills":15,"deaths":17,"assists":5,"plus_minus":"-2",\
-        "kast":"69%","first_kills":2,"first_deaths":3}]}
+        "team_abbreviation":"BC","role":null,"acs":201,"kd":0.88,\
+        "adr":138,"kills":15,"deaths":17,"assists":5,"plus_minus":-2,\
+        "kast":69.0,"first_kills":2,"first_deaths":3}]}
         """
     }
 

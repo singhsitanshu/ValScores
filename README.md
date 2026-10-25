@@ -222,18 +222,25 @@ inputs remain under `tests/fixtures/`.
 
 ## Client API contract
 
-- `GET /api/matches/timeline` requires timezone-aware `start` and `end` query
-  parameters. The interval is start-inclusive, end-exclusive, and limited to 31 days.
+[docs/API-CONTRACT.md](docs/API-CONTRACT.md) defines identifiers, match statuses
+and their transitions, timestamps, missing values, and error codes, with examples
+that are tested against FastAPI's generated schema. In short:
+
+- `GET /api/matches/timeline` requires `start` and `end` with a UTC offset. The
+  interval is start-inclusive, end-exclusive, and limited to 31 days.
 - `GET /api/matches/{match_id}/stats?game_id=all` reads only persisted data.
   Supplying a specific game ID selects that exact game or returns `404`.
 - Both GET endpoints are read-only: they never scrape VLR or mutate PostgreSQL.
 - `POST /api/matches/refresh` is the only endpoint that fetches and persists
   external match data. Its `limit`, `details_limit`, and `results_limit` query
   parameters are bounded and documented in OpenAPI.
+- Statuses are `upcoming`, `live`, `postponed`, `finished` and `cancelled`.
+- `null` means unknown; scores and statistics are never reported as a zero VLR did
+  not publish.
 - Errors use the stable shape `{"error":{"code":"...","message":"..."}}`.
 
-Timeline scores and map round scores are JSON integers or `null`. Player-stat
-numeric fields always contain a number; unavailable values are serialized as zero.
+Shared response fixtures live in `tests/fixtures/api/`; both the backend suite
+and the iOS tests check them.
 
 ## iOS backend configuration
 

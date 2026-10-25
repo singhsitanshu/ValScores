@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "invalid_range",
+    "message": "timeline range cannot exceed 31 days"
+  }
+}

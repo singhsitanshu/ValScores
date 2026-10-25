@@ -1,0 +1,72 @@
+[
+  {
+    "id": 3,
+    "vlr_match_id": "730003",
+    "team1": "Sentinels",
+    "team2": "G2 Esports",
+    "team1_score": 2,
+    "team2_score": 0,
+    "team1_round_score": null,
+    "team2_round_score": null,
+    "status": "finished",
+    "start_time": "2026-09-07T07:00:00Z",
+    "is_live": false,
+    "is_finished": true
+  },
+  {
+    "id": 1,
+    "vlr_match_id": "730001",
+    "team1": "Paper Rex",
+    "team2": "DRX",
+    "team1_score": null,
+    "team2_score": null,
+    "team1_round_score": null,
+    "team2_round_score": null,
+    "status": "upcoming",
+    "start_time": "2026-09-07T09:00:00Z",
+    "is_live": false,
+    "is_finished": false
+  },
+  {
+    "id": 2,
+    "vlr_match_id": "730002",
+    "team1": "Team Heretics",
+    "team2": "FNATIC",
+    "team1_score": 1,
+    "team2_score": 0,
+    "team1_round_score": 7,
+    "team2_round_score": 5,
+    "status": "live",
+    "start_time": "2026-09-07T10:00:00Z",
+    "is_live": true,
+    "is_finished": false
+  },
+  {
+    "id": 4,
+    "vlr_match_id": "730004",
+    "team1": "Team Liquid",
+    "team2": "Natus Vincere",
+    "team1_score": null,
+    "team2_score": null,
+    "team1_round_score": null,
+    "team2_round_score": null,
+    "status": "postponed",
+    "start_time": "2026-09-07T12:00:00Z",
+    "is_live": false,
+    "is_finished": false
+  },
+  {
+    "id": 5,
+    "vlr_match_id": "730005",
+    "team1": "KRÜ Esports",
+    "team2": "LEVIATÁN",
+    "team1_score": null,
+    "team2_score": null,
+    "team1_round_score": null,
+    "team2_round_score": null,
+    "status": "cancelled",
+    "start_time": "2026-09-07T13:00:00Z",
+    "is_live": false,
+    "is_finished": false
+  }
+]

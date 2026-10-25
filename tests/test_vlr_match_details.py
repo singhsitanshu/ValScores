@@ -101,7 +101,8 @@ class VlrMatchDetailTests(unittest.TestCase):
         self.assertEqual(details["stats_status"], "partial")
         self.assertEqual(details["live_score"], {"team1": "1", "team2": "0"})
         self.assertEqual(len(details["games"][0]["player_stats"]), 2)
-        self.assertEqual(details["games"][0]["player_stats"][1]["adr"], "0")
+        # A blank cell is unavailable (None), not a recorded zero.
+        self.assertIsNone(details["games"][0]["player_stats"][1]["adr"])
         self.assertTrue(
             any("Echo is missing adr" in warning for warning in details["parse_warnings"])
         )

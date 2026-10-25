@@ -3,29 +3,29 @@ import SwiftUI
 struct PlayerStatRowView: View {
     var playerName: String
     var subtitle: String
-    var kills: Int
-    var deaths: Int
-    var assists: Int
-    var kd: Double
-    var plusMinus: String
-    var kast: String
-    var adr: Int
-    var acs: Int
-    var firstKills: Int
-    var firstDeaths: Int
+    var kills: Int?
+    var deaths: Int?
+    var assists: Int?
+    var kd: Double?
+    var plusMinus: Int?
+    var kast: Double?
+    var adr: Int?
+    var acs: Int?
+    var firstKills: Int?
+    var firstDeaths: Int?
     var accentColor: Color = Color(red: 0.48, green: 0.36, blue: 1.0)
     var opposingColor: Color = Color.white.opacity(0.18)
 
     private var statColumns: [(label: String, value: String)] {
         [
-            ("KDA", "\(kills)/\(deaths)/\(assists)"),
-            ("KD", kd.formatted(.number.precision(.fractionLength(2)))),
-            ("+/-", plusMinus),
-            ("KAST", kast),
-            ("ADR", "\(adr)"),
-            ("ACS", "\(acs)"),
-            ("FK", "\(firstKills)"),
-            ("FD", "\(firstDeaths)")
+            ("KDA", "\(PlayerStatFormat.count(kills))/\(PlayerStatFormat.count(deaths))/\(PlayerStatFormat.count(assists))"),
+            ("KD", PlayerStatFormat.ratio(kd)),
+            ("+/-", PlayerStatFormat.signed(plusMinus)),
+            ("KAST", PlayerStatFormat.percent(kast)),
+            ("ADR", PlayerStatFormat.count(adr)),
+            ("ACS", PlayerStatFormat.count(acs)),
+            ("FK", PlayerStatFormat.count(firstKills)),
+            ("FD", PlayerStatFormat.count(firstDeaths))
         ]
     }
     
@@ -90,5 +90,30 @@ struct PlayerStatRowView: View {
         )
         .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
         .padding(.horizontal)
+    }
+}
+
+/// Text for optional player statistics. Unavailable values render as a dash so
+/// they are never mistaken for a recorded zero.
+enum PlayerStatFormat {
+    static let unavailable = "–"
+
+    static func count(_ value: Int?) -> String {
+        value.map(String.init) ?? unavailable
+    }
+
+    static func signed(_ value: Int?) -> String {
+        guard let value else { return unavailable }
+        return value > 0 ? "+\(value)" : String(value)
+    }
+
+    static func ratio(_ value: Double?) -> String {
+        guard let value else { return unavailable }
+        return String(format: "%.2f", value)
+    }
+
+    static func percent(_ value: Double?) -> String {
+        guard let value else { return unavailable }
+        return value.rounded() == value ? "\(Int(value))%" : String(format: "%.1f%%", value)
     }
 }

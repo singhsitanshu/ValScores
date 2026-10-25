@@ -1,0 +1,82 @@
+{
+  "match_info": {
+    "match_id": 2,
+    "vlr_match_id": "730002",
+    "team1": "Team Heretics",
+    "team2": "FNATIC",
+    "status": "live",
+    "map_vetoes": [
+      "TH ban Bind",
+      "FNC ban Pearl",
+      "TH pick Ascent",
+      "FNC pick Lotus"
+    ],
+    "selected_game_id": "602",
+    "maps": [
+      {
+        "game_id": "all",
+        "map_number": null,
+        "map_name": "All Maps",
+        "team1_round_score": null,
+        "team2_round_score": null
+      },
+      {
+        "game_id": "601",
+        "map_number": 1,
+        "map_name": "Ascent",
+        "team1_round_score": 13,
+        "team2_round_score": 9
+      },
+      {
+        "game_id": "602",
+        "map_number": 2,
+        "map_name": "Lotus",
+        "team1_round_score": 7,
+        "team2_round_score": 5
+      },
+      {
+        "game_id": "603",
+        "map_number": 3,
+        "map_name": "Split",
+        "team1_round_score": null,
+        "team2_round_score": null
+      }
+    ]
+  },
+  "team1_roster": [
+    {
+      "name": "Boo",
+      "team": "Team Heretics",
+      "team_abbreviation": "TH",
+      "role": "initiator",
+      "acs": 244,
+      "kd": 1.75,
+      "adr": null,
+      "kills": 7,
+      "deaths": 4,
+      "assists": 0,
+      "plus_minus": 3,
+      "kast": null,
+      "first_kills": null,
+      "first_deaths": null
+    }
+  ],
+  "team2_roster": [
+    {
+      "name": "Chronicle",
+      "team": "FNATIC",
+      "team_abbreviation": "FNC",
+      "role": null,
+      "acs": 176,
+      "kd": 0.67,
+      "adr": null,
+      "kills": 4,
+      "deaths": 6,
+      "assists": 2,
+      "plus_minus": -2,
+      "kast": null,
+      "first_kills": null,
+      "first_deaths": null
+    }
+  ]
+}

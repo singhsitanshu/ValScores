@@ -81,8 +81,9 @@ class Match(Base):
     vlr_match_id = Column(String, nullable=False)
     team1_name = Column(String, nullable=False)
     team2_name = Column(String, nullable=False)
-    team1_round_score = Column(String, nullable=True, default="0")
-    team2_round_score = Column(String, nullable=True, default="0")
+    # Current-map round score while live. NULL means unknown, never 0-0.
+    team1_round_score = Column(String, nullable=True)
+    team2_round_score = Column(String, nullable=True)
     # PostgreSQL stores an instant (TIMESTAMP WITH TIME ZONE); Python sees an
     # aware datetime and the API serializes that value as UTC.
     start_time = Column(UTCDateTime(), nullable=True)
@@ -111,8 +112,8 @@ class Game(Base):
     vlr_game_id = Column(String, nullable=False)
     map_number = Column(Integer, nullable=True)
     map_name = Column(String, nullable=False)
-    team1_round_score = Column(Integer, nullable=True, default=0)
-    team2_round_score = Column(Integer, nullable=True, default=0)
+    team1_round_score = Column(Integer, nullable=True)
+    team2_round_score = Column(Integer, nullable=True)
 
     match = relationship("Match", back_populates="games")
     player_stats = relationship(
@@ -121,6 +122,8 @@ class Game(Base):
 
 
 class PlayerStat(Base):
+    """Per-map player statistics. NULL means VLR did not report the value."""
+
     __tablename__ = "player_stats"
     __table_args__ = (
         # No stable player ID is currently persisted. Team plus display name is
@@ -139,16 +142,16 @@ class PlayerStat(Base):
     player_name = Column(String, nullable=False)
     team_name = Column(String, nullable=False)
     role = Column(String, nullable=True)
-    acs = Column(Integer, nullable=True, default=0)
-    kd_ratio = Column(Float, nullable=True, default=0.0)
-    adr = Column(Integer, nullable=True, default=0)
-    kills = Column(Integer, nullable=True, default=0)
-    deaths = Column(Integer, nullable=True, default=0)
-    assists = Column(Integer, nullable=True, default=0)
+    acs = Column(Integer, nullable=True)
+    kd_ratio = Column(Float, nullable=True)
+    adr = Column(Integer, nullable=True)
+    kills = Column(Integer, nullable=True)
+    deaths = Column(Integer, nullable=True)
+    assists = Column(Integer, nullable=True)
     plus_minus = Column(String, nullable=True)
     kast = Column(String, nullable=True)
-    first_kills = Column(Integer, nullable=True, default=0)
-    first_deaths = Column(Integer, nullable=True, default=0)
+    first_kills = Column(Integer, nullable=True)
+    first_deaths = Column(Integer, nullable=True)
 
     game = relationship("Game", back_populates="player_stats")
 

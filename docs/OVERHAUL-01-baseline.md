@@ -94,6 +94,9 @@ names are unreadable. (`GameCardView.swift`.)
 
 ### A2. Finished series report `0`–`0` round scores on the timeline
 
+**Resolved in ticket 02** ([API contract](API-CONTRACT.md)): round scores are now
+`null` unless the match is live, and unknown scores are stored as `NULL`.
+
 Reproduce: after a refresh, `GET /api/matches/timeline` returns finished matches
 such as `"team1_score": 1, "team2_score": 2, "team1_round_score": 0,
 "team2_round_score": 0`. The API contract says unknown scores are `null`, but

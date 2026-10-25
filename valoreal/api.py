@@ -3,6 +3,7 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import json
+import logging
 import re
 from types import SimpleNamespace
 from typing import Annotated
@@ -15,6 +16,7 @@ from sqlalchemy.orm import selectinload, sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .api_models import (
+    ALL_MAPS_GAME_ID,
     ErrorDetail,
     ErrorResponse,
     MatchStatsResponse,
@@ -22,14 +24,14 @@ from .api_models import (
     TimelineMatchResponse,
 )
 from .database_setup import Game, Match, engine as database_engine, initialize_database
-from .refresh_service import RefreshInProgressError, RefreshService
-from .time_contract import parse_utc_datetime
-from .vlreal import (
+from .match_status import (
     MATCH_STATUS_FINISHED,
     MATCH_STATUS_LIVE,
     MATCH_STATUS_UPCOMING,
     normalize_match_status,
 )
+from .refresh_service import RefreshInProgressError, RefreshService
+from .time_contract import parse_utc_datetime
 
 
 MAX_TIMELINE_RANGE = timedelta(days=31)
@@ -38,7 +40,12 @@ ERROR_RESPONSES = {
     404: {"model": ErrorResponse},
     409: {"model": ErrorResponse},
     422: {"model": ErrorResponse},
+    500: {"model": ErrorResponse},
 }
+# Framework-raised HTTP errors without an application code.
+GENERIC_ERROR_CODES = {404: "not_found", 405: "method_not_allowed"}
+
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -66,7 +73,10 @@ async def http_error_response(_request: Request, exc: StarletteHTTPException):
     if isinstance(detail, dict) and {"code", "message"}.issubset(detail):
         error = ErrorDetail(code=str(detail["code"]), message=str(detail["message"]))
     else:
-        error = ErrorDetail(code=f"http_{exc.status_code}", message=str(detail))
+        error = ErrorDetail(
+            code=GENERIC_ERROR_CODES.get(exc.status_code, "http_error"),
+            message=str(detail),
+        )
     return JSONResponse(
         status_code=exc.status_code,
         content=ErrorResponse(error=error).model_dump(),
@@ -86,6 +96,17 @@ async def validation_error_response(_request: Request, exc: RequestValidationErr
     )
 
 
+@app.exception_handler(Exception)
+async def internal_error_response(_request: Request, exc: Exception):
+    logger.exception("Unhandled API error", exc_info=exc)
+    return JSONResponse(
+        status_code=500,
+        content=ErrorResponse(
+            error=ErrorDetail(code="internal_error", message="An unexpected error occurred")
+        ).model_dump(),
+    )
+
+
 def optional_int(value):
     if value is None or value == "":
         return None
@@ -93,6 +114,36 @@ def optional_int(value):
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def optional_float(value):
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def optional_signed_int(value):
+    """Parse a stored plus/minus such as '+7' or '-2'; None when unavailable."""
+    match = re.fullmatch(r"\s*([+-]?\d+)\s*", str(value)) if value is not None else None
+    return int(match.group(1)) if match else None
+
+
+def optional_percent(value):
+    """Parse a stored percentage such as '78%' into 78.0; None when unavailable."""
+    match = (
+        re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*%?\s*", str(value))
+        if value is not None
+        else None
+    )
+    return float(match.group(1)) if match else None
+
+
+def public_vlr_match_id(stored_id: str) -> str:
+    """Strip the leading slash from the stored canonical VLR path ID."""
+    return (stored_id or "").lstrip("/") or stored_id
 
 
 def map_wins_from_games(games):
@@ -142,8 +193,8 @@ def games_for_response(games):
         return [
             SimpleNamespace(
                 id=None,
-                vlr_game_id="all",
-                map_number=0,
+                vlr_game_id=ALL_MAPS_GAME_ID,
+                map_number=None,
                 map_name="All Maps",
                 team1_round_score=None,
                 team2_round_score=None,
@@ -153,8 +204,8 @@ def games_for_response(games):
     return [
         SimpleNamespace(
             id=None,
-            vlr_game_id="all",
-            map_number=0,
+            vlr_game_id=ALL_MAPS_GAME_ID,
+            map_number=None,
             map_name="All Maps",
             team1_round_score=None,
             team2_round_score=None,
@@ -164,21 +215,27 @@ def games_for_response(games):
 
 
 def game_to_dict(game):
-    is_all_maps = (game.vlr_game_id or "") == "all"
+    is_all_maps = game.vlr_game_id == ALL_MAPS_GAME_ID
     return {
-        "game_id": game.vlr_game_id or str(game.id),
-        "map_number": game.map_number or 0,
+        "game_id": game.vlr_game_id,
+        "map_number": None if is_all_maps or not game.map_number else game.map_number,
         "map_name": "All Maps" if is_all_maps else game.map_name,
         "team1_round_score": None if is_all_maps else optional_int(game.team1_round_score),
         "team2_round_score": None if is_all_maps else optional_int(game.team2_round_score),
     }
 
 
-def parse_percent(value):
-    try:
-        return float(str(value or "0").replace("%", "").strip())
-    except ValueError:
-        return 0.0
+def sum_if_known(values):
+    """Sum per-map values; None if any map did not report the value."""
+    if not values or any(value is None for value in values):
+        return None
+    return sum(values)
+
+
+def mean_if_known(values, digits=None):
+    if not values or any(value is None for value in values):
+        return None
+    return round(sum(values) / len(values), digits)
 
 
 def aggregate_player_stats(games):
@@ -199,48 +256,42 @@ def aggregate_player_stats(games):
                     "acs_values": [],
                     "adr_values": [],
                     "kast_values": [],
-                    "kills": 0,
-                    "deaths": 0,
-                    "assists": 0,
-                    "first_kills": 0,
-                    "first_deaths": 0,
+                    "kills": [],
+                    "deaths": [],
+                    "assists": [],
+                    "first_kills": [],
+                    "first_deaths": [],
                 }
                 order.append(key)
 
             aggregate = aggregates[key]
-            aggregate["acs_values"].append(player.acs or 0)
-            aggregate["adr_values"].append(player.adr or 0)
-            aggregate["kast_values"].append(parse_percent(player.kast))
-            aggregate["kills"] += player.kills or 0
-            aggregate["deaths"] += player.deaths or 0
-            aggregate["assists"] += player.assists or 0
-            aggregate["first_kills"] += player.first_kills or 0
-            aggregate["first_deaths"] += player.first_deaths or 0
+            aggregate["acs_values"].append(optional_int(player.acs))
+            aggregate["adr_values"].append(optional_int(player.adr))
+            aggregate["kast_values"].append(optional_percent(player.kast))
+            for field in ("kills", "deaths", "assists", "first_kills", "first_deaths"):
+                aggregate[field].append(optional_int(getattr(player, field)))
 
     result = []
     for key in order:
         aggregate = aggregates[key]
-        kills = aggregate["kills"]
-        deaths = aggregate["deaths"]
-        difference = kills - deaths
-        acs_values = aggregate["acs_values"]
-        adr_values = aggregate["adr_values"]
-        kast_values = aggregate["kast_values"]
+        kills = sum_if_known(aggregate["kills"])
+        deaths = sum_if_known(aggregate["deaths"])
+        known_kd = kills is not None and deaths is not None
         result.append(
             SimpleNamespace(
                 player_name=aggregate["player_name"],
                 team_name=aggregate["team_name"],
                 role=aggregate["role"],
-                acs=round(sum(acs_values) / len(acs_values)) if acs_values else 0,
-                kd_ratio=round(kills / deaths, 2) if deaths else float(kills),
-                adr=round(sum(adr_values) / len(adr_values)) if adr_values else 0,
+                acs=mean_if_known(aggregate["acs_values"]),
+                kd_ratio=(round(kills / deaths, 2) if deaths else float(kills)) if known_kd else None,
+                adr=mean_if_known(aggregate["adr_values"]),
                 kills=kills,
                 deaths=deaths,
-                assists=aggregate["assists"],
-                plus_minus=f"+{difference}" if difference > 0 else str(difference),
-                kast=f"{round(sum(kast_values) / len(kast_values))}%" if kast_values else "0%",
-                first_kills=aggregate["first_kills"],
-                first_deaths=aggregate["first_deaths"],
+                assists=sum_if_known(aggregate["assists"]),
+                plus_minus=kills - deaths if known_kd else None,
+                kast=mean_if_known(aggregate["kast_values"], digits=1),
+                first_kills=sum_if_known(aggregate["first_kills"]),
+                first_deaths=sum_if_known(aggregate["first_deaths"]),
             )
         )
     return result
@@ -348,17 +399,17 @@ def player_to_dict(player, canonical_team_name):
         "name": player.player_name,
         "team": canonical_team_name,
         "team_abbreviation": player.team_name or "",
-        "role": player.role or "",
-        "acs": int(player.acs or 0),
-        "kd": float(player.kd_ratio or 0.0),
-        "adr": int(player.adr or 0),
-        "kills": int(player.kills or 0),
-        "deaths": int(player.deaths or 0),
-        "assists": int(player.assists or 0),
-        "plus_minus": player.plus_minus or "0",
-        "kast": player.kast or "0%",
-        "first_kills": int(player.first_kills or 0),
-        "first_deaths": int(player.first_deaths or 0),
+        "role": player.role or None,
+        "acs": optional_int(player.acs),
+        "kd": optional_float(player.kd_ratio),
+        "adr": optional_int(player.adr),
+        "kills": optional_int(player.kills),
+        "deaths": optional_int(player.deaths),
+        "assists": optional_int(player.assists),
+        "plus_minus": optional_signed_int(player.plus_minus),
+        "kast": optional_percent(player.kast),
+        "first_kills": optional_int(player.first_kills),
+        "first_deaths": optional_int(player.first_deaths),
     }
 
 
@@ -372,6 +423,19 @@ def parse_map_vetoes(raw_value):
     if not isinstance(decoded, list):
         return []
     return [str(value) for value in decoded]
+
+
+def public_match_status(match):
+    """Canonical status for API responses.
+
+    Legacy rows whose stored label is unrecognized are reported as upcoming. An
+    upcoming row that already has decided maps is reported as finished, matching
+    how persistence promotes such matches.
+    """
+    status = normalize_match_status(match.status, MATCH_STATUS_UPCOMING)
+    if status == MATCH_STATUS_UPCOMING and map_wins_from_games(match.games):
+        return MATCH_STATUS_FINISHED
+    return status
 
 
 def validated_timeline_range(start: datetime, end: datetime):
@@ -395,8 +459,14 @@ def validated_timeline_range(start: datetime, end: datetime):
     responses=ERROR_RESPONSES,
 )
 def get_timeline(
-    start: Annotated[datetime, Query(description="Inclusive range start with timezone")],
-    end: Annotated[datetime, Query(description="Exclusive range end with timezone")],
+    start: Annotated[
+        datetime,
+        Query(description="Inclusive range start; ISO-8601 with a UTC offset, e.g. 2026-09-07T00:00:00Z"),
+    ],
+    end: Annotated[
+        datetime,
+        Query(description="Exclusive range end; later than start and at most 31 days after it"),
+    ],
 ):
     """Return persisted matches in a bounded half-open UTC range."""
     start_utc, end_utc = validated_timeline_range(start, end)
@@ -420,17 +490,10 @@ def get_timeline(
             if start_time is None:
                 continue
 
-            status = normalize_match_status(match.status, MATCH_STATUS_UPCOMING)
+            status = public_match_status(match)
             is_live = status == MATCH_STATUS_LIVE
             is_finished = status == MATCH_STATUS_FINISHED
             derived_series_score = map_wins_from_games(match.games)
-            if derived_series_score and not is_live:
-                is_finished = True
-
-            if not is_live and not is_finished:
-                status = MATCH_STATUS_UPCOMING
-            elif is_finished:
-                status = MATCH_STATUS_FINISHED
 
             team1_series_score = match.team1_series_score
             team2_series_score = match.team2_series_score
@@ -445,12 +508,15 @@ def get_timeline(
             result.append(
                 {
                     "id": match.id,
+                    "vlr_match_id": public_vlr_match_id(match.vlr_match_id),
                     "team1": match.team1_name,
                     "team2": match.team2_name,
                     "team1_score": optional_int(team1_series_score) if show_series_score else None,
                     "team2_score": optional_int(team2_series_score) if show_series_score else None,
-                    "team1_round_score": optional_int(match.team1_round_score),
-                    "team2_round_score": optional_int(match.team2_round_score),
+                    # Round scores describe the map in progress, so only live
+                    # matches report them.
+                    "team1_round_score": optional_int(match.team1_round_score) if is_live else None,
+                    "team2_round_score": optional_int(match.team2_round_score) if is_live else None,
                     "status": status,
                     "start_time": start_time,
                     "is_live": is_live,
@@ -472,7 +538,7 @@ def get_match_stats(
     game_id: Annotated[
         str,
         Query(min_length=1, max_length=64, pattern=GAME_ID_PATTERN),
-    ] = "all",
+    ] = ALL_MAPS_GAME_ID,
 ):
     """Return only statistics already persisted for one match and map selection."""
     session = SessionLocal()
@@ -491,14 +557,14 @@ def get_match_stats(
             (game for game in games if game.vlr_game_id == game_id),
             None,
         )
-        if game_id != "all" and selected_game is None:
+        if game_id != ALL_MAPS_GAME_ID and selected_game is None:
             raise api_error(
                 404,
                 "game_not_found",
                 f"Game {game_id!r} was not found for match {match_id}",
             )
 
-        if game_id == "all":
+        if game_id == ALL_MAPS_GAME_ID:
             if selected_game is not None:
                 players = [
                     player
@@ -517,8 +583,11 @@ def get_match_stats(
         team1_stats, team2_stats = split_rosters(players, match)
         return {
             "match_info": {
+                "match_id": match.id,
+                "vlr_match_id": public_vlr_match_id(match.vlr_match_id),
                 "team1": match.team1_name,
                 "team2": match.team2_name,
+                "status": public_match_status(match),
                 "map_vetoes": parse_map_vetoes(match.map_vetoes_raw),
                 "selected_game_id": game_id,
                 "maps": [game_to_dict(game) for game in games_for_response(games)],
@@ -537,7 +606,7 @@ def get_match_stats(
 @app.post(
     "/api/matches/refresh",
     response_model=RefreshResponse,
-    responses={409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+    responses={code: ERROR_RESPONSES[code] for code in (409, 422, 500)},
 )
 def force_refresh_matches(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
@@ -546,10 +615,17 @@ def force_refresh_matches(
 ):
     """Explicitly refresh persisted data from VLR with bounded work limits."""
     try:
-        return match_refresh_service.refresh(
+        result = match_refresh_service.refresh(
             limit=limit,
             details_limit=details_limit,
             results_limit=results_limit,
         )
     except RefreshInProgressError as exc:
         raise api_error(409, "refresh_in_progress", str(exc)) from exc
+    failures = [
+        {**failure, "vlr_match_id": public_vlr_match_id(failure["vlr_match_id"])}
+        if failure.get("vlr_match_id")
+        else failure
+        for failure in result.get("failures", [])
+    ]
+    return {**result, "failures": failures}

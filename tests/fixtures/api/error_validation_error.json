@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "validation_error",
+    "message": "Input should be less than or equal to 100"
+  }
+}

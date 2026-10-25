@@ -7,8 +7,9 @@ struct MatchTimeContractTests {
         try UTCDateCrossesToPreviousLocalDay()
         try UTCDateCrossesYearBoundaryInLocalTimezone()
         try changingToNonEnglishLocaleDoesNotChangeGrouping()
-        try nullLegacyTimestampDoesNotMatchAnyDate()
-        print("Ran 5 Swift time-contract tests: OK")
+        try nullTimestampIsRejectedByTheContract()
+        try statusesDecodeWithUnknownFallback()
+        print("Ran 6 Swift time-contract tests: OK")
     }
 
     static func decodesUTCISO8601TimestampAsDate() throws {
@@ -64,25 +65,45 @@ struct MatchTimeContractTests {
         require(frenchResult, "French locale should retain the match")
     }
 
-    static func nullLegacyTimestampDoesNotMatchAnyDate() throws {
-        let match = try makeMatch(timestamp: nil)
-        require(match.startTime == nil, "null legacy timestamp should decode as nil")
-        require(!MatchTimeContract.isMatch(match, on: Date()), "nil timestamps should not match a date")
+    static func nullTimestampIsRejectedByTheContract() throws {
+        // The timeline only returns scheduled matches, so start_time is required.
+        do {
+            _ = try makeMatch(timestamp: nil)
+            require(false, "null start_time must not decode")
+        } catch is DecodingError {
+            // Expected.
+        }
     }
 
-    static func makeMatch(timestamp: String?) throws -> MatchInfo {
+    static func statusesDecodeWithUnknownFallback() throws {
+        let cases: [(String, MatchStatus)] = [
+            ("upcoming", .upcoming),
+            ("live", .live),
+            ("postponed", .postponed),
+            ("finished", .finished),
+            ("cancelled", .cancelled),
+            ("forfeited", .unknown("forfeited")),
+        ]
+        for (raw, expected) in cases {
+            let match = try makeMatch(timestamp: "2026-09-06T13:00:00Z", status: raw)
+            require(match.status == expected, "status \(raw) should decode as \(expected)")
+        }
+    }
+
+    static func makeMatch(timestamp: String?, status: String = "upcoming") throws -> MatchInfo {
         let payload: [String: Any] = [
             "id": 1,
+            "vlr_match_id": "700001",
             "team1": "Alpha",
             "team2": "Bravo",
             "team1_score": NSNull(),
             "team2_score": NSNull(),
-            "status": "Upcoming",
+            "status": status,
             "start_time": timestamp ?? NSNull(),
             "is_live": false,
             "is_finished": false,
-            "team1_round_score": 0,
-            "team2_round_score": 0,
+            "team1_round_score": NSNull(),
+            "team2_round_score": NSNull(),
         ]
         let data = try JSONSerialization.data(withJSONObject: payload)
         return try MatchTimeContract.makeDecoder().decode(MatchInfo.self, from: data)

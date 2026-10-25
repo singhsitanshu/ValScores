@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "game_not_found",
+    "message": "Game '999' was not found for match 3"
+  }
+}

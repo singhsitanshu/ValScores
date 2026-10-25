@@ -145,7 +145,16 @@ class VlrMatchListTests(unittest.TestCase):
             self.parse("vlr_list_live.html")[0]["status"],
             self.parse("vlr_list_completed_result.html")[0]["status"],
         }
-        self.assertEqual(statuses, MATCH_STATUSES)
+        self.assertEqual(statuses, {"upcoming", "live", "finished"})
+        self.assertLessEqual(statuses, MATCH_STATUSES)
+
+    def test_postponed_and_cancelled_cards_are_retained(self):
+        original = fixture("vlr_list_upcoming.html")
+        for label, expected in (("Postponed", "postponed"), ("Cancelled", "cancelled")):
+            with self.subTest(label=label):
+                html = original.replace(">Upcoming<", f">{label}<", 1)
+                self.assertNotEqual(html, original)
+                self.assertEqual(self.scraper.parse_match_list(html)[0]["status"], expected)
 
     def test_canonical_id_is_stable_when_slug_changes(self):
         original = fixture("vlr_list_upcoming.html")

@@ -9,6 +9,17 @@ from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 from sqlalchemy.orm import sessionmaker
 from .database_setup import Match, Game, PlayerStat, engine as database_engine
+from .match_status import (
+    MATCH_STATUS_CANCELLED,
+    MATCH_STATUS_FINISHED,
+    MATCH_STATUS_LIVE,
+    MATCH_STATUS_POSTPONED,
+    MATCH_STATUS_UPCOMING,
+    MATCH_STATUSES,
+    normalize_match_status,
+    resolve_status_transition,
+    status_rank,
+)
 from .time_contract import (
     choose_canonical_match_timestamp,
     normalize_vlr_utc_timestamp,
@@ -16,15 +27,6 @@ from .time_contract import (
     parse_vlr_schedule_timestamp,
 )
 
-
-MATCH_STATUS_UPCOMING = "upcoming"
-MATCH_STATUS_LIVE = "live"
-MATCH_STATUS_FINISHED = "finished"
-MATCH_STATUSES = frozenset({
-    MATCH_STATUS_UPCOMING,
-    MATCH_STATUS_LIVE,
-    MATCH_STATUS_FINISHED,
-})
 
 DEFAULT_HTTP_TIMEOUT = (5, 20)
 DEFAULT_USER_AGENT = "ValScores/1.0 (+https://www.vlr.gg)"
@@ -57,18 +59,6 @@ class PersistenceOutcome:
     action: str
     vlr_match_id: str
     database_id: int
-
-
-def normalize_match_status(value, default=None):
-    """Map VLR and legacy status labels onto the public three-state contract."""
-    normalized = str(value or "").strip().lower()
-    if "live" in normalized or "in progress" in normalized:
-        return MATCH_STATUS_LIVE
-    if any(marker in normalized for marker in ("completed", "finished", "final")):
-        return MATCH_STATUS_FINISHED
-    if normalized in {"upcoming", "tbd", "scheduled", "pending"}:
-        return MATCH_STATUS_UPCOMING
-    return default
 
 
 class VlrScraper:
@@ -401,6 +391,10 @@ class VlrScraper:
         status_text = " ".join(note.get_text(" ", strip=True) for note in notes)
         status_upper = status_text.upper()
 
+        if "POSTPONED" in status_upper:
+            return MATCH_STATUS_POSTPONED
+        if "CANCELLED" in status_upper or "CANCELED" in status_upper:
+            return MATCH_STATUS_CANCELLED
         if "LIVE" in status_upper:
             return MATCH_STATUS_LIVE
         if "FINAL" in status_upper or "FINISHED" in status_upper or "COMPLETED" in status_upper:
@@ -510,11 +504,7 @@ class VlrScraper:
 
             kills = self._numeric_text(raw_stats['kills'])
             deaths = self._numeric_text(raw_stats['deaths'])
-            kd_ratio = "0.0"
-            try:
-                kd_ratio = str(round(int(kills) / int(deaths), 2)) if int(deaths) > 0 else kills
-            except (TypeError, ValueError):
-                warnings.append(f"player {player_name} has invalid kills/deaths values")
+            kd_ratio = self._kd_ratio_text(kills, deaths)
 
             player_stats.append({
                 'player': player_name,
@@ -555,20 +545,29 @@ class VlrScraper:
     def _has_stat_value(self, value):
         return bool(value and re.search(r'[-+]?\d', value))
 
+    # Missing or blank stat cells parse to None so an unavailable value is
+    # never confused with a recorded zero.
     def _numeric_text(self, value):
         match = re.search(r'-?\d+', value or "")
-        return match.group(0) if match else "0"
+        return match.group(0) if match else None
 
     def _signed_stat_text(self, value):
         match = re.search(r'[+-]?\d+', value or "")
-        return match.group(0) if match else "0"
+        return match.group(0) if match else None
 
     def _percent_text(self, value):
         match = re.search(r'-?\d+(?:\.\d+)?%?', value or "")
         if not match:
-            return "0%"
+            return None
         parsed = match.group(0)
         return parsed if parsed.endswith('%') else f"{parsed}%"
+
+    def _kd_ratio_text(self, kills, deaths):
+        if kills is None or deaths is None:
+            return None
+        if int(deaths) > 0:
+            return str(round(int(kills) / int(deaths), 2))
+        return kills
 
     def _extract_legacy_player_stats(self, stats_container):
         player_stats = []
@@ -593,11 +592,7 @@ class VlrScraper:
             first_kills = self._stat_value(cols, 11)
             first_deaths = self._stat_value(cols, 12)
 
-            kd_ratio = "0.0"
-            try:
-                kd_ratio = str(round(int(kills) / int(deaths), 2)) if int(deaths) > 0 else kills
-            except (TypeError, ValueError):
-                pass
+            kd_ratio = self._kd_ratio_text(kills, deaths)
 
             player_stats.append({
                 'player': player_name_tag.text.strip(),
@@ -617,16 +612,15 @@ class VlrScraper:
         return player_stats
 
     def _stat_value(self, cols, index):
-        text = self._stat_text(cols, index)
-        match = re.search(r'-?\d+', text)
-        return match.group(0) if match else "0"
+        return self._numeric_text(self._stat_text(cols, index))
 
     def _stat_text(self, cols, index):
         if len(cols) <= index:
-            return "0"
+            return None
 
         stat = cols[index].find('span', class_='mod-both')
-        return stat.get_text(" ", strip=True) if stat else cols[index].get_text(" ", strip=True)
+        text = stat.get_text(" ", strip=True) if stat else cols[index].get_text(" ", strip=True)
+        return text or None
 
 
 # 🔌 DB setup
@@ -674,15 +668,6 @@ def richer_match(existing, candidate):
         return candidate_teams > existing_teams
 
     return candidate.id < existing.id
-
-
-def status_rank(status):
-    normalized = normalize_match_status(status)
-    if normalized == MATCH_STATUS_FINISHED:
-        return 2
-    if normalized == MATCH_STATUS_LIVE:
-        return 1
-    return 0
 
 
 def merge_duplicate_match(session, primary, duplicate):
@@ -848,13 +833,7 @@ def persist_match(match_dict, details_dict, session_factory=None):
         list_status = normalize_match_status(
             match_dict.get('status'), MATCH_STATUS_UPCOMING
         )
-        detail_status = normalize_match_status(details_dict.get('status'))
-        status = (
-            detail_status
-            if detail_status is not None
-            and status_rank(detail_status) >= status_rank(list_status)
-            else list_status
-        )
+        status = resolve_status_transition(list_status, details_dict.get('status'))
 
         if not db_match:
             db_match = Match(
@@ -867,8 +846,7 @@ def persist_match(match_dict, details_dict, session_factory=None):
             )
             session.add(db_match)
         else:
-            if status_rank(status) >= status_rank(db_match.status):
-                db_match.status = status
+            db_match.status = resolve_status_transition(db_match.status, status)
             if best_time:
                 db_match.start_time = best_time
             elif not db_match.start_time and legacy_time and not db_match.legacy_start_time:
@@ -885,8 +863,8 @@ def persist_match(match_dict, details_dict, session_factory=None):
         if has_meaningful_score(*incoming_round_scores) or not has_meaningful_score(
             db_match.team1_round_score, db_match.team2_round_score
         ):
-            db_match.team1_round_score = incoming_round_scores[0] or "0"
-            db_match.team2_round_score = incoming_round_scores[1] or "0"
+            db_match.team1_round_score = incoming_round_scores[0]
+            db_match.team2_round_score = incoming_round_scores[1]
 
         current_status = normalize_match_status(
             db_match.status or status,
@@ -962,8 +940,8 @@ def persist_match(match_dict, details_dict, session_factory=None):
             ):
                 db_game.map_name = map_name
             incoming_game_scores = (
-                score_to_int(game_data.get('team1_round_score')),
-                score_to_int(game_data.get('team2_round_score')),
+                optional_score_int(game_data.get('team1_round_score')),
+                optional_score_int(game_data.get('team2_round_score')),
             )
             if has_meaningful_score(*incoming_game_scores) or not has_meaningful_score(
                 db_game.team1_round_score, db_game.team2_round_score
@@ -1043,6 +1021,14 @@ def score_to_int(score):
         return int(score)
     except (TypeError, ValueError):
         return 0
+
+
+def optional_score_int(score):
+    """Integer score for storage; None when the score is unknown."""
+    try:
+        return int(score)
+    except (TypeError, ValueError):
+        return None
 
 
 def series_score_from_games(games):
@@ -1126,22 +1112,26 @@ def save_player_stats(session, db_game, player_stats, authoritative=False):
         if authoritative or incoming_role:
             db_player.role = incoming_role
 
+        # None means VLR did not report the value. A partial page never erases
+        # a known value; an authoritative page replaces it, including with None.
         def incoming_int(field):
-            value = str(p_data.get(field, '0'))
-            return int(value) if value.lstrip('-').isdigit() else 0
+            value = p_data.get(field)
+            text = str(value).strip() if value is not None else ""
+            return int(text) if text.lstrip('-').isdigit() else None
+
+        def merge_value(incoming, current):
+            return incoming if authoritative or incoming is not None else current
 
         def merge_numeric(field, current):
-            incoming = incoming_int(field)
-            return incoming if authoritative or incoming != 0 or not current else current
+            return merge_value(incoming_int(field), current)
 
         db_player.acs = merge_numeric('acs', db_player.acs)
 
         try:
-            incoming_kd = float(p_data.get('k_d', '0'))
+            incoming_kd = float(p_data['k_d']) if p_data.get('k_d') is not None else None
         except (TypeError, ValueError):
-            incoming_kd = 0.0
-        if authoritative or incoming_kd != 0 or not db_player.kd_ratio:
-            db_player.kd_ratio = incoming_kd
+            incoming_kd = None
+        db_player.kd_ratio = merge_value(incoming_kd, db_player.kd_ratio)
 
         db_player.adr = merge_numeric('adr', db_player.adr)
         db_player.kills = merge_numeric('kills', db_player.kills)
@@ -1150,12 +1140,8 @@ def save_player_stats(session, db_game, player_stats, authoritative=False):
         db_player.first_kills = merge_numeric('first_kills', db_player.first_kills)
         db_player.first_deaths = merge_numeric('first_deaths', db_player.first_deaths)
 
-        incoming_plus_minus = p_data.get('plus_minus', "0")
-        if authoritative or incoming_plus_minus not in {None, "", "0"} or not db_player.plus_minus:
-            db_player.plus_minus = incoming_plus_minus
-        incoming_kast = p_data.get('kast', "0%")
-        if authoritative or incoming_kast not in {None, "", "0%"} or not db_player.kast:
-            db_player.kast = incoming_kast
+        db_player.plus_minus = merge_value(p_data.get('plus_minus') or None, db_player.plus_minus)
+        db_player.kast = merge_value(p_data.get('kast') or None, db_player.kast)
 
     if authoritative and seen_player_identities:
         existing_stats = session.query(PlayerStat).filter(

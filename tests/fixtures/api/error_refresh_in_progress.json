@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "refresh_in_progress",
+    "message": "A match refresh is already in progress"
+  }
+}

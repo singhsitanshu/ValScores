@@ -1,0 +1,70 @@
+{
+  "match_info": {
+    "match_id": 3,
+    "vlr_match_id": "730003",
+    "team1": "Sentinels",
+    "team2": "G2 Esports",
+    "status": "finished",
+    "map_vetoes": [],
+    "selected_game_id": "all",
+    "maps": [
+      {
+        "game_id": "all",
+        "map_number": null,
+        "map_name": "All Maps",
+        "team1_round_score": null,
+        "team2_round_score": null
+      },
+      {
+        "game_id": "611",
+        "map_number": 1,
+        "map_name": "Haven",
+        "team1_round_score": 13,
+        "team2_round_score": 0
+      },
+      {
+        "game_id": "612",
+        "map_number": 2,
+        "map_name": "Icebox",
+        "team1_round_score": 13,
+        "team2_round_score": 11
+      }
+    ]
+  },
+  "team1_roster": [
+    {
+      "name": "zekken",
+      "team": "Sentinels",
+      "team_abbreviation": "SEN",
+      "role": "duelist",
+      "acs": 262,
+      "kd": 1.5,
+      "adr": 171,
+      "kills": 33,
+      "deaths": 22,
+      "assists": 9,
+      "plus_minus": 11,
+      "kast": 81.0,
+      "first_kills": 6,
+      "first_deaths": 2
+    }
+  ],
+  "team2_roster": [
+    {
+      "name": "leaf",
+      "team": "G2 Esports",
+      "team_abbreviation": "G2",
+      "role": null,
+      "acs": 204,
+      "kd": 0.91,
+      "adr": 138,
+      "kills": 21,
+      "deaths": 23,
+      "assists": 7,
+      "plus_minus": -2,
+      "kast": 68.0,
+      "first_kills": 2,
+      "first_deaths": 4
+    }
+  ]
+}

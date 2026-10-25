@@ -341,8 +341,8 @@ class RefreshServiceTests(unittest.TestCase):
         partial["games"][0]["player_stats"] = [
             {
                 **player("Ace", "ALP", "22"),
-                "acs": "0",
-                "adr": "0",
+                "acs": None,
+                "adr": None,
             }
         ]
         persist_match(

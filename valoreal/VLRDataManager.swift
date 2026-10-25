@@ -181,11 +181,16 @@ class VLRDataManager: ObservableObject {
             MatchTimeContract.isMatch($0, on: date, calendar: calendar)
         }
 
+        // Live first, then scheduled (including postponed and unrecognized
+        // statuses), then finished, with cancelled matches last.
         let liveMatches = matchesForDate.filter { $0.is_live }
-        let upcomingMatches = matchesForDate.filter { !$0.is_live && !$0.is_finished }
+        let upcomingMatches = matchesForDate.filter {
+            !$0.is_live && !$0.is_finished && $0.status != .cancelled
+        }
         let finishedMatches = matchesForDate.filter { $0.is_finished && !$0.is_live }
+        let cancelledMatches = matchesForDate.filter { $0.status == .cancelled }
 
-        filteredMatches = liveMatches + upcomingMatches + finishedMatches
+        filteredMatches = liveMatches + upcomingMatches + finishedMatches + cancelledMatches
     }
 
     private func updateLoadedStateForSelection() {

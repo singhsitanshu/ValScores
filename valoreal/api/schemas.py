@@ -130,12 +130,31 @@ class RefreshFailureResponse(APIModel):
     href: str | None = None
 
 
+class RefreshWarningResponse(APIModel):
+    stage: Literal["list_warning", "detail_warning"] = Field(
+        description="list_warning: a list card was stored with unreadable optional fields. "
+                    "detail_warning: a match page was stored but VLR omitted some statistics.",
+    )
+    message: str
+    source: str | None = None
+    vlr_match_id: str | None = None
+    url: str | None = None
+    card_index: int | None = Field(default=None, ge=1)
+    href: str | None = None
+    field: str | None = None
+
+
 class RefreshResponse(APIModel):
-    status: Literal["success", "partial", "failed"]
+    status: Literal["success", "partial", "failed"] = Field(
+        description="success: no failures (warnings allowed). partial: some failures and "
+                    "some matches stored. failed: failures and nothing stored.",
+    )
     matches_examined: int = Field(ge=0)
     inserted: int = Field(ge=0)
     updated: int = Field(ge=0)
     unchanged: int = Field(ge=0)
     details_refreshed: int = Field(ge=0)
-    failure_count: int = Field(ge=0)
+    failure_count: int = Field(ge=0, description="Fetch, parse and persistence failures.")
     failures: list[RefreshFailureResponse]
+    warning_count: int = Field(ge=0, description="Data stored with incomplete upstream fields.")
+    warnings: list[RefreshWarningResponse]

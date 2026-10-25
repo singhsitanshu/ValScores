@@ -161,6 +161,15 @@ class FixtureRefreshService:
                     "error": "429 Too Many Requests",
                 }
             ],
+            "warning_count": 1,
+            "warnings": [
+                {
+                    "stage": "detail_warning",
+                    "vlr_match_id": "/730003",
+                    "url": "https://www.vlr.gg/730003",
+                    "message": "Haven: player leaf is missing kast",
+                }
+            ],
         }
 
 

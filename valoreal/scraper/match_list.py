@@ -7,11 +7,7 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
-from ..domain.match_status import (
-    MATCH_STATUS_LIVE,
-    MATCH_STATUS_UPCOMING,
-    normalize_match_status,
-)
+from ..domain.match_status import MATCH_STATUS_LIVE, normalize_match_status
 from ..domain.time_contract import parse_vlr_schedule_timestamp
 from .client import VLR_BASE_URL
 from .errors import MatchCardParseError, MatchListParseError, MatchListParseWarning
@@ -123,13 +119,10 @@ class MatchListParser:
 
         status_node = card.select_one('.ml-status, .match-item-status')
         status_text = status_node.get_text(" ", strip=True) if status_node else None
+        # None means "not observed"; persistence then keeps the stored status.
         status = normalize_match_status(status_override or status_text)
         if status is None:
-            status = MATCH_STATUS_UPCOMING
-            problems.append((
-                "status",
-                f"missing or unsupported status {status_text!r}; recorded as upcoming",
-            ))
+            problems.append(("status", f"missing or unsupported status {status_text!r}"))
 
         time_node = card.select_one('.match-item-time')
         match_time = time_node.get_text(" ", strip=True) if time_node else None

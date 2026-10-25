@@ -110,6 +110,35 @@ The pre-Alembic schema was checked against the ticket-02 contract:
 | Player `plus_minus`, `kast` | Stored as VLR text (`'+5'`, `'76%'`). | Unchanged; the API converts them to numbers. |
 | `map_vetoes_raw` | JSON stored as text. | Unchanged. |
 
+## Persisting scraped data
+
+`valoreal/database/match_persistence.py` writes one match per call with
+`persist_match`. Its rules keep repeated and partial scrapes safe.
+
+**Identity and atomicity**
+
+- A match is identified by its canonical upstream ID (`/<id>`). Legacy
+  `/<id>/<slug>` rows are merged into the canonical row on first sight. Maps are
+  identified by `(match, vlr_game_id)` and players by `(map, team, player name)`;
+  unique constraints back all three.
+- Each call is one transaction. Any error rolls back every row it touched, so a
+  failed update leaves the stored match exactly as it was.
+- Replaying identical input issues no `INSERT`, `UPDATE` or `DELETE` and reports
+  `unchanged`.
+
+**Merge rules**
+
+| Field | Rule |
+| --- | --- |
+| Team names | A placeholder (`TBD`, blank) never replaces a real name; a different real name replaces it (correction). The match page's names win over the list card's. |
+| Status | Changes only through the [allowed transitions](#0002-contract-constraints) (`finished` and `cancelled` are final). An unreadable status (`None`) is not an observation and leaves the stored status alone; a new match without one starts as `upcoming`. When the list and match pages disagree, the match page wins only through an allowed transition. |
+| Start time | A trustworthy timestamp replaces the stored one; a missing one keeps it. |
+| Series score | A score present on the list card (including `0`) replaces the stored one. Otherwise the match page score is used; upcoming matches have none. |
+| Map and live round scores | Kept when the incoming score is missing or `0 - 0` and a real score is stored; otherwise replaced. |
+| Player statistics | A missing (`None`) value keeps the stored value. A real value, including `0`, replaces it. An authoritative page (all statistics published) replaces every value, including with `None`. |
+| Maps and players not in the scrape | Deleted only when the match page is authoritative. Partial or empty snapshots never delete stored maps or players. |
+| Schedule vs results page | Records for the same match are merged before saving: non-empty values from the later page win, and status moves only forward. |
+
 ## Backups
 
 Take a backup before every `upgrade` and `baseline` on a database whose data you

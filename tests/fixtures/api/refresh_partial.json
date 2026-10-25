@@ -16,5 +16,18 @@
       "card_index": null,
       "href": null
     }
+  ],
+  "warning_count": 1,
+  "warnings": [
+    {
+      "stage": "detail_warning",
+      "message": "Haven: player leaf is missing kast",
+      "source": null,
+      "vlr_match_id": "730003",
+      "url": "https://www.vlr.gg/730003",
+      "card_index": null,
+      "href": null,
+      "field": null
+    }
   ]
 }

@@ -1,6 +1,7 @@
 from pathlib import Path
 import unittest
 
+from sqlalchemy import event
 from sqlalchemy.orm import sessionmaker
 
 from database_support import close_test_engine, create_test_engine
@@ -89,6 +90,43 @@ class DetailPersistenceTests(unittest.TestCase):
         finally:
             session.close()
 
+
+    def test_replaying_an_identical_scrape_writes_nothing(self):
+        record = {
+            "vlr_match_id": "/123456",
+            "url": "https://www.vlr.gg/123456/example",
+            "team1": "Alpha Five",
+            "team2": "Bravo Crew",
+            "scheduled_time": "2026-08-14T18:00:00Z",
+            "status": "finished",
+            "team1_score": 2,
+            "team2_score": 0,
+        }
+        details = self.scraper.parse_match_details(fixture("vlr_completed_multi_map.html"))
+        session_factory = self.session_factory()
+        first = persist_match(record, details, session_factory=session_factory)
+
+        writes = []
+
+        def record_writes(_connection, _cursor, statement, *_args):
+            if statement.lstrip().split(None, 1)[0].upper() in {"INSERT", "UPDATE", "DELETE"}:
+                writes.append(statement)
+
+        event.listen(self.engine, "before_cursor_execute", record_writes)
+        try:
+            replay = persist_match(record, details, session_factory=session_factory)
+        finally:
+            event.remove(self.engine, "before_cursor_execute", record_writes)
+
+        self.assertEqual((first.action, replay.action), ("inserted", "unchanged"))
+        self.assertEqual(writes, [])
+        session = session_factory()
+        try:
+            counts = (session.query(Match).count(), session.query(Game).count(),
+                      session.query(PlayerStat).count())
+        finally:
+            session.close()
+        self.assertEqual(counts, (1, 2, 4))
 
 if __name__ == "__main__":
     unittest.main()

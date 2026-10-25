@@ -168,7 +168,7 @@ class VlrMatchListTests(unittest.TestCase):
         self.assertEqual((postponed["status"], postponed["time"], postponed["team1_score"]),
                          ("postponed", None, None))
         self.assertEqual((garbled["status"], garbled["scheduled_time"], garbled["team1_score"]),
-                         ("upcoming", None, None))
+                         (None, None, None))
         # A genuine 0-0 live score is kept as integers, not treated as missing.
         self.assertEqual((live["status"], live["team1_score"], live["team2_score"]), ("live", 0, 0))
         self.assertEqual(self.scraper.last_list_parse_failures, ())

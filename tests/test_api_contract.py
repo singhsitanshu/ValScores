@@ -326,6 +326,8 @@ class APIContractTests(unittest.TestCase):
                     "details_refreshed": 0,
                     "failure_count": 0,
                     "failures": [],
+                    "warning_count": 0,
+                    "warnings": [],
                 }
 
         service = SuccessfulRefreshService()
@@ -375,6 +377,8 @@ class APIContractTests(unittest.TestCase):
                             "error": "429 Too Many Requests",
                         }
                     ],
+                    "warning_count": 0,
+                    "warnings": [],
                 }
 
         self.use_refresh_service(PartialRefreshService())

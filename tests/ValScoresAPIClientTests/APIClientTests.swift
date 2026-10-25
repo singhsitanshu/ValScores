@@ -102,7 +102,8 @@ struct APIClientTests {
                 status: 200,
                 body: """
                 {"status":"success","matches_examined":0,"inserted":0,"updated":0,
-                "unchanged":0,"details_refreshed":0,"failure_count":0,"failures":[]}
+                "unchanged":0,"details_refreshed":0,"failure_count":0,"failures":[],
+                "warning_count":0,"warnings":[]}
                 """
             )
         }

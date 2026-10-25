@@ -9,9 +9,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from database_support import TEST_DATABASE_URL, close_test_engine, create_test_engine
-from valoreal import vlreal
-from valoreal.database_setup import Game, Match, PlayerStat, create_sqlite_engine
-from valoreal.migrations import LATEST_SCHEMA_VERSION, run_migrations
+from valoreal.database.connection import create_sqlite_engine
+from valoreal.database.match_persistence import find_match_for_save, persist_match
+from valoreal.database.migrations import LATEST_SCHEMA_VERSION, run_migrations
+from valoreal.database.models import Game, Match, PlayerStat
 
 
 def match_payload(status="Upcoming", **overrides):
@@ -71,13 +72,13 @@ class DatabaseIdentityTests(unittest.TestCase):
         if not TEST_DATABASE_URL:
             run_migrations(self.engine)
         self.session_factory = sessionmaker(bind=self.engine, expire_on_commit=False)
-        self.original_session_factory = vlreal.Session
-        vlreal.Session = self.session_factory
 
     def tearDown(self):
-        vlreal.Session = self.original_session_factory
         close_test_engine(self.engine)
         self.temporary_directory.cleanup()
+
+    def save(self, match_dict, details_dict):
+        persist_match(match_dict, details_dict, session_factory=self.session_factory)
 
     def counts(self):
         session = self.session_factory()
@@ -91,12 +92,12 @@ class DatabaseIdentityTests(unittest.TestCase):
             session.close()
 
     def test_repeated_same_match_save_is_idempotent(self):
-        vlreal.save_to_database(match_payload(), {})
-        vlreal.save_to_database(match_payload(), {})
+        self.save(match_payload(), {})
+        self.save(match_payload(), {})
         self.assertEqual(self.counts(), (1, 0, 0))
 
     def test_utc_timestamp_round_trips_as_an_aware_datetime(self):
-        vlreal.save_to_database(match_payload(), {})
+        self.save(match_payload(), {})
 
         session = self.session_factory()
         try:
@@ -107,15 +108,15 @@ class DatabaseIdentityTests(unittest.TestCase):
             session.close()
 
     def test_repeated_same_game_save_is_idempotent(self):
-        vlreal.save_to_database(match_payload(), details_payload())
-        vlreal.save_to_database(match_payload(), details_payload())
+        self.save(match_payload(), details_payload())
+        self.save(match_payload(), details_payload())
         self.assertEqual(self.counts(), (1, 1, 1))
 
     def test_repeated_same_player_save_updates_in_place(self):
-        vlreal.save_to_database(match_payload(), details_payload())
+        self.save(match_payload(), details_payload())
         updated = details_payload()
         updated["games"][0]["player_stats"][0]["kills"] = "24"
-        vlreal.save_to_database(match_payload(status="LIVE"), updated)
+        self.save(match_payload(status="LIVE"), updated)
 
         session = self.session_factory()
         try:
@@ -149,11 +150,11 @@ class DatabaseIdentityTests(unittest.TestCase):
             }
         )
         initial["stats_status"] = "available"
-        vlreal.save_to_database(match_payload(status="Finished"), initial)
+        self.save(match_payload(status="Finished"), initial)
 
         corrected = details_payload(stats_status="available")
         corrected["games"][0]["player_stats"][0]["kills"] = "24"
-        vlreal.save_to_database(match_payload(status="Finished"), corrected)
+        self.save(match_payload(status="Finished"), corrected)
 
         session = self.session_factory()
         try:
@@ -166,8 +167,8 @@ class DatabaseIdentityTests(unittest.TestCase):
             session.close()
 
     def test_upcoming_match_updates_to_live_without_duplication(self):
-        vlreal.save_to_database(match_payload(), {})
-        vlreal.save_to_database(
+        self.save(match_payload(), {})
+        self.save(
             match_payload(
                 status="LIVE",
                 team1_score="1",
@@ -209,7 +210,7 @@ class DatabaseIdentityTests(unittest.TestCase):
         )
         session.commit()
 
-        canonical = vlreal.find_match_for_save(session, "/12345")
+        canonical = find_match_for_save(session, "/12345")
         session.commit()
 
         self.assertEqual(session.query(Match).count(), 1)
@@ -221,7 +222,7 @@ class DatabaseIdentityTests(unittest.TestCase):
 
     def test_save_rolls_back_all_rows_on_error(self):
         with self.assertRaises(IntegrityError):
-            vlreal.save_to_database(match_payload(team2=None), details_payload())
+            self.save(match_payload(team2=None), details_payload())
         self.assertEqual(self.counts(), (0, 0, 0))
 
     def test_foreign_keys_are_enforced_and_delete_cascades(self):
@@ -236,7 +237,7 @@ class DatabaseIdentityTests(unittest.TestCase):
         session.rollback()
         session.close()
 
-        vlreal.save_to_database(match_payload(), details_payload())
+        self.save(match_payload(), details_payload())
         session = self.session_factory()
         match = session.query(Match).one()
         session.delete(match)
@@ -245,7 +246,7 @@ class DatabaseIdentityTests(unittest.TestCase):
         self.assertEqual(self.counts(), (0, 0, 0))
 
     def test_logical_identity_constraints_reject_duplicate_rows(self):
-        vlreal.save_to_database(match_payload(), details_payload())
+        self.save(match_payload(), details_payload())
 
         session = self.session_factory()
         match = session.query(Match).one()

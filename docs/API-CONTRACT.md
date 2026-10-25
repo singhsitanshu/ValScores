@@ -1,8 +1,8 @@
 # ValScores API contract
 
-This is the contract between the FastAPI backend (`valoreal/api.py`,
-`valoreal/api_models.py`) and the SwiftUI client (`valoreal/MatchTimeContract.swift`,
-`valoreal/APIModels.swift`, `valoreal/APIClient.swift`). FastAPI's generated schema at
+This is the contract between the FastAPI backend (`valoreal/api/routes.py`,
+`valoreal/api/schemas.py`) and the SwiftUI client (`ValScores/Shared/Models/`,
+`ValScores/Shared/Networking/`). FastAPI's generated schema at
 `/openapi.json` is authoritative for field names and types; this document explains
 their meaning.
 
@@ -59,7 +59,7 @@ as unknown rather than failing (Swift decodes it as `MatchStatus.unknown(raw)`).
 `is_live` and `is_finished` are derived (`status == "live"` / `"finished"`) and kept
 for compatibility.
 
-Persistence (`valoreal/match_status.py`) only applies these transitions; any other
+Persistence (`valoreal/domain/match_status.py`) only applies these transitions; any other
 observation keeps the stored status, so a stale page cannot move a match backwards:
 
 | From | Allowed to |

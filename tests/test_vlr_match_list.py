@@ -4,16 +4,14 @@ import warnings
 
 import requests
 
-import database_support  # noqa: F401  Isolates DATABASE_URL before backend imports.
-
-from valoreal.vlreal import (
-    DEFAULT_HTTP_TIMEOUT,
-    MATCH_STATUSES,
+from valoreal.domain.match_status import MATCH_STATUSES
+from valoreal.scraper import (
     MatchListParseError,
     MatchListParseWarning,
     VlrScraper,
     VlrUpstreamError,
 )
+from valoreal.scraper.client import DEFAULT_HTTP_TIMEOUT
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -101,7 +99,7 @@ class VlrMatchListTests(unittest.TestCase):
         self.assertEqual(match["scheduled_time"], "2027-01-01T05:30:00Z")
 
     def test_missing_optional_fields_survive_and_malformed_neighbor_is_observable(self):
-        with self.assertLogs("valoreal.vlreal", level="WARNING") as logged:
+        with self.assertLogs("valoreal.scraper.match_list", level="WARNING") as logged:
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
                 matches = self.parse("vlr_list_malformed_optional.html")
@@ -130,7 +128,7 @@ class VlrMatchListTests(unittest.TestCase):
             'class="wf-module-item match-item" href="/700005',
             'class="wf-module-item" href="/700005',
         )
-        with self.assertLogs("valoreal.vlreal", level="WARNING"):
+        with self.assertLogs("valoreal.scraper.match_list", level="WARNING"):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", MatchListParseWarning)
                 with self.assertRaisesRegex(

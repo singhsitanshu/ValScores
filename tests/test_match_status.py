@@ -6,15 +6,16 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 
 from database_support import close_test_engine, create_test_engine
-from valoreal import api
-from valoreal.database_setup import Base, Match
-from valoreal.match_status import (
+from valoreal.api import app
+from valoreal.api.dependencies import get_session_factory
+from valoreal.database.match_persistence import persist_match
+from valoreal.database.models import Base, Match
+from valoreal.domain.match_status import (
     ALLOWED_STATUS_TRANSITIONS,
     MATCH_STATUSES,
     normalize_match_status,
     resolve_status_transition,
 )
-from valoreal.vlreal import persist_match
 
 
 def list_record(status, **overrides):
@@ -118,7 +119,7 @@ class MatchStatusPersistenceTests(unittest.TestCase):
 
 class ErrorEnvelopeTests(unittest.TestCase):
     def setUp(self):
-        self.client = TestClient(api.app, raise_server_exceptions=False)
+        self.client = TestClient(app, raise_server_exceptions=False)
 
     def test_framework_errors_use_contract_codes(self):
         cases = [
@@ -133,17 +134,15 @@ class ErrorEnvelopeTests(unittest.TestCase):
                 self.assertEqual(response.json()["error"]["code"], code)
 
     def test_unhandled_errors_return_the_error_envelope(self):
-        original = api.SessionLocal
-
         def broken_session():
             raise RuntimeError("database exploded")
 
-        api.SessionLocal = broken_session
+        app.dependency_overrides[get_session_factory] = lambda: broken_session
         try:
             with self.assertLogs("valoreal.api", level="ERROR"):
                 response = self.client.get("/api/matches/1/stats")
         finally:
-            api.SessionLocal = original
+            app.dependency_overrides.clear()
         self.assertEqual(response.status_code, 500)
         self.assertEqual(
             response.json(),

@@ -2,19 +2,19 @@
 
 import threading
 
-from . import vlreal
-from .database_setup import Match
-from .vlreal import (
+from ..database import connection
+from ..database.match_persistence import persist_match
+from ..database.models import Match
+from ..domain.match_status import (
     MATCH_STATUS_FINISHED,
     MATCH_STATUS_LIVE,
     MATCH_STATUS_UPCOMING,
-    MatchListParseError,
-    VlrScraper,
-    is_placeholder_team,
     normalize_match_status,
-    persist_match,
     status_rank,
 )
+from ..domain.normalization import is_placeholder_team
+from ..scraper import MatchListParseError, VlrScraper
+from .values import public_vlr_match_id
 
 
 _PROCESS_REFRESH_LOCK = threading.Lock()
@@ -238,7 +238,7 @@ class RefreshService:
         if status != MATCH_STATUS_FINISHED:
             return False
 
-        session = (self.session_factory or vlreal.Session)()
+        session = (self.session_factory or connection.SessionLocal)()
         try:
             match_id = record["vlr_match_id"]
             existing = (
@@ -275,3 +275,20 @@ class RefreshService:
             **context,
             "error": str(exc),
         }
+
+
+def public_refresh_result(result):
+    """Present a refresh result with slash-free upstream match IDs."""
+    failures = [
+        {**failure, "vlr_match_id": public_vlr_match_id(failure["vlr_match_id"])}
+        if failure.get("vlr_match_id")
+        else failure
+        for failure in result.get("failures", [])
+    ]
+    return {**result, "failures": failures}
+
+
+if __name__ == "__main__":
+    import json
+
+    print(json.dumps(public_refresh_result(RefreshService().refresh()), indent=2))

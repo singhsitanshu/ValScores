@@ -7,10 +7,10 @@ from fastapi import HTTPException
 from sqlalchemy.orm import sessionmaker
 
 from database_support import close_test_engine, create_test_engine
-from valoreal import api
-from valoreal.database_setup import Base, Game, Match, PlayerStat
-from valoreal.refresh_service import RefreshInProgressError, RefreshService
-from valoreal.vlreal import PersistenceOutcome, persist_match
+from valoreal.api import routes
+from valoreal.database.match_persistence import PersistenceOutcome, persist_match
+from valoreal.database.models import Base, Game, Match, PlayerStat
+from valoreal.services.refresh import RefreshInProgressError, RefreshService
 
 
 def match_record(match_id="/900001", status="upcoming", **overrides):
@@ -400,12 +400,8 @@ class RefreshEndpointTests(unittest.TestCase):
             def refresh(self, **_kwargs):
                 raise RefreshInProgressError("A match refresh is already in progress")
 
-        original = api.match_refresh_service
-        api.match_refresh_service = BusyService()
-        self.addCleanup(setattr, api, "match_refresh_service", original)
-
         with self.assertRaises(HTTPException) as raised:
-            api.force_refresh_matches()
+            routes.force_refresh_matches(refresh_service=BusyService())
 
         self.assertEqual(raised.exception.status_code, 409)
 

@@ -22,9 +22,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from database_support import close_test_engine, create_test_engine
-from valoreal import api
-from valoreal.database_setup import Base, Game, Match, PlayerStat
-from valoreal.refresh_service import RefreshInProgressError
+from valoreal.api import app
+from valoreal.api.dependencies import get_refresh_service, get_session_factory
+from valoreal.database.models import Base, Game, Match, PlayerStat
+from valoreal.services.refresh import RefreshInProgressError
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -193,10 +194,8 @@ class APIFixtureContractTests(unittest.TestCase):
         )
         Base.metadata.create_all(self.engine)
         self.session_factory = sessionmaker(bind=self.engine, autoflush=False)
-        self.original_session_factory = api.SessionLocal
-        self.original_refresh_service = api.match_refresh_service
-        api.SessionLocal = self.session_factory
-        self.client = TestClient(api.app)
+        app.dependency_overrides[get_session_factory] = lambda: self.session_factory
+        self.client = TestClient(app)
         session = self.session_factory()
         try:
             seed_contract_database(session)
@@ -205,15 +204,15 @@ class APIFixtureContractTests(unittest.TestCase):
         self.openapi = self.client.get("/openapi.json").json()
 
     def tearDown(self):
-        api.SessionLocal = self.original_session_factory
-        api.match_refresh_service = self.original_refresh_service
+        app.dependency_overrides.clear()
         close_test_engine(self.engine)
 
     def request_fixture(self, name):
         method, _path, request_path, params, _status = FIXTURE_REQUESTS[name]
-        api.match_refresh_service = (
+        service = (
             BusyRefreshService() if name == "error_refresh_in_progress.json" else FixtureRefreshService()
         )
+        app.dependency_overrides[get_refresh_service] = lambda: service
         return self.client.request(method.upper(), request_path, params=params)
 
     def test_fixtures_are_the_exact_api_responses(self):

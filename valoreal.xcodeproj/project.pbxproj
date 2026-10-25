@@ -12,40 +12,22 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		9E0E87E12F773A31001CD76B /* Exceptions for "valoreal" folder in "valoreal" target */ = {
+		9E0E87E12F773A31001CD76B /* Exceptions for "ValScores" folder in "valoreal" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
-				__init__.py,
-				__pycache__,
-				__pycache__/__init__.cpython-313.pyc,
-				__pycache__/api.cpython-313.pyc,
-				__pycache__/api_models.cpython-313.pyc,
-				__pycache__/database_setup.cpython-313.pyc,
-				__pycache__/migrations.cpython-313.pyc,
-				__pycache__/refresh_service.cpython-313.pyc,
-				__pycache__/time_contract.cpython-313.pyc,
-				__pycache__/vlreal.cpython-313.pyc,
-				api.py,
-				api_models.py,
-				database_setup.py,
-				migrations.py,
-				refresh_service.py,
-				time_contract.py,
-				valorant_stats.db,
-				vlreal.py,
 			);
 			target = 9EF2E36E2F70912200EDFBAD /* valoreal */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		9EF2E3712F70912200EDFBAD /* valoreal */ = {
+		9EF2E3712F70912200EDFBAD /* ValScores */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				9E0E87E12F773A31001CD76B /* Exceptions for "valoreal" folder in "valoreal" target */,
+				9E0E87E12F773A31001CD76B /* Exceptions for "ValScores" folder in "valoreal" target */,
 			);
-			path = valoreal;
+			path = ValScores;
 			sourceTree = "<group>";
 		};
 		A10000022F80000100EDFBAD /* ValScoresTests */ = {
@@ -76,7 +58,7 @@
 		9EF2E3662F70912200EDFBAD = {
 			isa = PBXGroup;
 			children = (
-				9EF2E3712F70912200EDFBAD /* valoreal */,
+				9EF2E3712F70912200EDFBAD /* ValScores */,
 				A10000022F80000100EDFBAD /* ValScoresTests */,
 				9EF2E3702F70912200EDFBAD /* Products */,
 			);
@@ -107,7 +89,7 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				9EF2E3712F70912200EDFBAD /* valoreal */,
+				9EF2E3712F70912200EDFBAD /* ValScores */,
 			);
 			name = valoreal;
 			packageProductDependencies = (
@@ -360,13 +342,8 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
-				EXCLUDED_SOURCE_FILE_NAMES = (
-					"*.db",
-					"*.py",
-					"*.pyc",
-				);
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = valoreal/Info.plist;
+				INFOPLIST_FILE = ValScores/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = ValScores;
 				INFOPLIST_KEY_CFBundleName = ValScores;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -402,13 +379,8 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
-				EXCLUDED_SOURCE_FILE_NAMES = (
-					"*.db",
-					"*.py",
-					"*.pyc",
-				);
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = valoreal/Info.plist;
+				INFOPLIST_FILE = ValScores/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = ValScores;
 				INFOPLIST_KEY_CFBundleName = ValScores;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";

@@ -10,6 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+
 MatchStatus = Literal["upcoming", "live", "postponed", "finished", "cancelled"]
 
 ErrorCode = Literal[
@@ -24,8 +25,6 @@ ErrorCode = Literal[
     "http_error",
     "internal_error",
 ]
-
-ALL_MAPS_GAME_ID = "all"
 
 
 class APIModel(BaseModel):

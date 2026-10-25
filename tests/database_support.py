@@ -38,7 +38,8 @@ os.environ["DATABASE_URL"] = TEST_DATABASE_URL or "sqlite://"
 def create_test_engine(sqlite_url: str, **sqlite_kwargs):
     from sqlalchemy.schema import CreateSchema
 
-    from valoreal.database_setup import Base, create_database_engine
+    from valoreal.database.connection import create_database_engine
+    from valoreal.database.models import Base
 
     if not TEST_DATABASE_URL:
         return create_database_engine(sqlite_url, **sqlite_kwargs)
@@ -67,7 +68,7 @@ def close_test_engine(test_engine) -> None:
 
     from sqlalchemy.schema import DropSchema
 
-    from valoreal.database_setup import create_database_engine
+    from valoreal.database.connection import create_database_engine
 
     bootstrap_engine = create_database_engine(TEST_DATABASE_URL)
     with bootstrap_engine.begin() as connection:

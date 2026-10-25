@@ -117,3 +117,12 @@ A persistence test intentionally violates a `NOT NULL` constraint, and
 `vlreal.persist_match` logs the full SQL error to stderr. Passing runs therefore
 print a scary `Could not persist VLR match ...` line. Test-output noise only; the
 README now notes it is expected.
+
+### A5. Team colors change on every app launch
+
+Found during ticket 03. Reproduce: launch the app twice and compare a team's badge
+and card gradient. `Color.forTeam` (now `ValScores/Shared/UI/TeamColor.swift`)
+sums `scalar.value.hashValue`, and Swift seeds `hashValue` randomly per process,
+so the same team gets a different palette entry each launch. A deterministic hash
+(for example summing the scalar values directly) would fix it.
+

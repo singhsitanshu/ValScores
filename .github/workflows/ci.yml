@@ -64,17 +64,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Portable Swift regression checks
-        run: |
-          out="$RUNNER_TEMP/swift-checks"
-          mkdir -p "$out"
-          swiftc -parse-as-library valoreal/MatchTimeContract.swift tests/ValScoresTimeContractTests/MatchTimeContractTests.swift -o "$out/time-contract"
-          "$out/time-contract"
-          swiftc -parse-as-library valoreal/MatchTimeContract.swift valoreal/APIModels.swift valoreal/APIClient.swift tests/ValScoresAPIClientTests/APIClientTests.swift -o "$out/api-client"
-          "$out/api-client"
-          swiftc -parse-as-library valoreal/MatchTimeContract.swift valoreal/APIModels.swift valoreal/APIClient.swift valoreal/VLRDataManager.swift tests/ValScoresTimelineStateTests/TimelineStateTests.swift -o "$out/timeline-state"
-          "$out/timeline-state"
-          swiftc -parse-as-library valoreal/MatchTimeContract.swift valoreal/APIModels.swift valoreal/APIClient.swift valoreal/MatchDetailState.swift tests/ValScoresMatchDetailTests/MatchDetailStateTests.swift -o "$out/match-detail"
-          "$out/match-detail"
+        run: SWIFT_CHECKS_OUT="$RUNNER_TEMP/swift-checks" scripts/swift-checks.sh
       - name: XCTest (shared valoreal scheme)
         run: scripts/ios-test.sh -resultBundlePath "$RUNNER_TEMP/ValScoresTests.xcresult"
       - name: Upload test results

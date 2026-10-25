@@ -1,6 +1,6 @@
 //
-//  valorealApp.swift
-//  valoreal
+//  ValScoresApp.swift
+//  ValScores
 //
 //  Created by Sitanshu Singh on 3/22/26.
 //
@@ -8,7 +8,7 @@
 import SwiftUI
 
 @main
-struct valorealApp: App {
+struct ValScoresApp: App {
     private var isRunningTests: Bool {
         let environment = ProcessInfo.processInfo.environment
         return environment["VALSCORES_XCTEST"] == "1"

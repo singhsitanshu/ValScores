@@ -9,7 +9,7 @@ from collections import defaultdict
 
 from sqlalchemy import inspect, text
 
-from .time_contract import normalize_explicit_utc_timestamp
+from ..domain.time_contract import normalize_explicit_utc_timestamp
 
 
 LATEST_SCHEMA_VERSION = 2
@@ -602,3 +602,11 @@ def run_migrations(engine):
         violations = connection.exec_driver_sql("PRAGMA foreign_key_check").all()
         if violations:
             raise RuntimeError(f"Foreign-key violations after migration: {violations}")
+
+
+def migrate_match_time_contract(database_engine=None):
+    """Explicit compatibility entry point for a legacy SQLite database only."""
+    if database_engine is None:
+        from .connection import engine as database_engine
+
+    run_migrations(database_engine)

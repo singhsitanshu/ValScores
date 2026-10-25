@@ -5,7 +5,8 @@ PostgreSQL. This document takes a fresh checkout to a running backend, a running
 app, and passing tests.
 
 Known setup issues and the current state of every check are recorded in
-[docs/OVERHAUL-01-baseline.md](docs/OVERHAUL-01-baseline.md).
+[docs/OVERHAUL-01-baseline.md](docs/OVERHAUL-01-baseline.md). The directory
+layout and dependency rules are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Prerequisites
 
@@ -108,7 +109,7 @@ set -a && source .env && set +a
 For example, to initialize the schema without starting the server:
 
 ```bash
-python -m valoreal.database_setup
+python -m valoreal.database
 ```
 
 ## Tests
@@ -168,18 +169,11 @@ The script picks the first available iPhone simulator; set
 `xcodebuild`. If you cannot change `xcode-select`, prefix the command with
 `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`.
 
-The earlier portable Swift regression executables remain available as
-lightweight compiler checks:
+The portable Swift regression executables in `tests/ValScores*Tests` compile
+shared app code with `swiftc` alone, without the simulator:
 
 ```bash
-swiftc -parse-as-library valoreal/MatchTimeContract.swift tests/ValScoresTimeContractTests/MatchTimeContractTests.swift -o /tmp/valscores-time-contract-tests
-/tmp/valscores-time-contract-tests
-swiftc -parse-as-library valoreal/MatchTimeContract.swift valoreal/APIModels.swift valoreal/APIClient.swift tests/ValScoresAPIClientTests/APIClientTests.swift -o /tmp/valscores-api-client-tests
-/tmp/valscores-api-client-tests
-swiftc -parse-as-library valoreal/MatchTimeContract.swift valoreal/APIModels.swift valoreal/APIClient.swift valoreal/VLRDataManager.swift tests/ValScoresTimelineStateTests/TimelineStateTests.swift -o /tmp/valscores-timeline-state-tests
-/tmp/valscores-timeline-state-tests
-swiftc -parse-as-library valoreal/MatchTimeContract.swift valoreal/APIModels.swift valoreal/APIClient.swift valoreal/MatchDetailState.swift tests/ValScoresMatchDetailTests/MatchDetailStateTests.swift -o /tmp/valscores-match-detail-tests
-/tmp/valscores-match-detail-tests
+scripts/swift-checks.sh
 ```
 
 ### Continuous integration
@@ -188,7 +182,7 @@ swiftc -parse-as-library valoreal/MatchTimeContract.swift valoreal/APIModels.swi
 
 - **Backend** (Ubuntu, Python 3.12 and 3.13): the regression suite against a
   per-job PostgreSQL 17 service container, then again in SQLite mode.
-- **iOS** (macOS 26): the portable Swift checks, then `scripts/ios-test.sh`. The
+- **iOS** (macOS 26): `scripts/swift-checks.sh`, then `scripts/ios-test.sh`. The
   `.xcresult` bundle is uploaded when tests fail.
 
 ## PostgreSQL database
@@ -250,7 +244,7 @@ first non-empty value from:
 1. the `VALSCORES_API_BASE_URL` Xcode scheme environment variable;
 2. the `VALSCORES_API_BASE_URL` user default (which can be supplied as an Xcode
    launch argument: `-VALSCORES_API_BASE_URL http://192.168.1.20:8000`);
-3. the `VALSCORES_API_BASE_URL` value in `valoreal/Info.plist`;
+3. the `VALSCORES_API_BASE_URL` value in `ValScores/Info.plist`;
 4. the simulator default, `http://127.0.0.1:8000`.
 
 For the iOS Simulator, start the backend with the documented localhost command.

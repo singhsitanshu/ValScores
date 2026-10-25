@@ -1,58 +1,201 @@
 # ValScores
 
-ValScores includes an iOS client and a local FastAPI backend. This document covers the minimal backend development setup.
+ValScores includes a SwiftUI iOS client and a local FastAPI backend backed by
+PostgreSQL. This document takes a fresh checkout to a running backend, a running
+app, and passing tests.
+
+Known setup issues and the current state of every check are recorded in
+[docs/OVERHAUL-01-baseline.md](docs/OVERHAUL-01-baseline.md).
 
 ## Prerequisites
 
 - Git
-- Python 3.12 or 3.13; Python 3.12 is the development baseline recorded in `.python-version`
-- PostgreSQL 17 (the included Compose service is the supported development setup)
+- Python 3.12 or 3.13. Python 3.12 is the baseline recorded in `.python-version`;
+  CI runs both.
+- Docker Desktop (or another Docker Engine with Compose v2), **running**
+- Xcode 26 or newer with an iOS Simulator runtime installed (Xcode > Settings >
+  Components). The project uses Xcode 26 build settings and will not open in
+  older versions.
+
+`xcodebuild` must point at Xcode rather than the Command Line Tools. Check with
+`xcode-select -p`; if it prints `/Library/Developer/CommandLineTools`, run:
+
+```bash
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+```
 
 Run all commands below from the repository root.
 
-## Backend setup
+## Quick start
+
+### 1. Clone and configure
 
 ```bash
 git clone https://github.com/singhsitanshu/ValScores.git
 cd ValScores
+cp .env.example .env
+```
+
+`.env` is ignored by Git. The defaults match the local-only credentials in
+`compose.yaml`; nothing in the repository is a real secret. Docker Compose reads
+`.env` automatically for its port settings.
+
+### 2. Start PostgreSQL
+
+```bash
+docker compose up -d --wait db
+```
+
+If port 5432 is already in use (for example by a local PostgreSQL install or
+another container), set `VALSCORES_DB_PORT` in `.env` to a free port, update the
+port in `DATABASE_URL` to match, and rerun the command.
+
+### 3. Install the backend
+
+Use whichever supported interpreter you have (`python3.12` or `python3.13`):
+
+```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e .
+python -m pip install -e '.[test]'
 ```
 
-The editable install reads the pinned runtime dependencies from `pyproject.toml`. No separate requirements file or manual `PYTHONPATH` configuration is needed.
+The editable install reads the pinned dependencies from `pyproject.toml`. No
+separate requirements file or `PYTHONPATH` configuration is needed.
 
-Start PostgreSQL and configure the backend connection:
+### 4. Start the backend
 
 ```bash
-docker compose up -d db
-export DATABASE_URL='postgresql+psycopg://valscores:valscores@localhost:5432/valscores'
+python -m uvicorn valoreal.api:app --reload --env-file .env --host 127.0.0.1 --port 8000
 ```
 
-`DATABASE_URL` is required. Tests may use `TEST_DATABASE_URL` to override it with
-a dedicated PostgreSQL database. Credentials are supplied through environment
-configuration and are not embedded in Python source.
+Startup creates the schema in an empty database. The API is at
+<http://127.0.0.1:8000>, interactive OpenAPI docs at <http://127.0.0.1:8000/docs>,
+and the raw schema at <http://127.0.0.1:8000/openapi.json>. Stop it with `Ctrl-C`.
 
-## Start the backend
+A fresh database has no matches. To load current matches from VLR (this is the
+only endpoint that contacts VLR):
 
 ```bash
-python -m uvicorn valoreal.api:app --reload --host 127.0.0.1 --port 8000
+curl -X POST 'http://127.0.0.1:8000/api/matches/refresh'
 ```
 
-The API is available at <http://127.0.0.1:8000>. FastAPI's interactive OpenAPI documentation is at <http://127.0.0.1:8000/docs>, and the raw schema is at <http://127.0.0.1:8000/openapi.json>.
+### 5. Launch the iOS app
 
-Stop the development server with `Ctrl-C`.
+Open `valoreal.xcodeproj` in Xcode, select the shared **valoreal** scheme and any
+iPhone simulator, and press Run (`Command-R`). The simulator reaches the backend
+at `http://127.0.0.1:8000` with no extra configuration. See
+[iOS backend configuration](#ios-backend-configuration) for physical devices.
+
+## Configuration
+
+| Variable | Used by | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | backend | Required runtime PostgreSQL URL. |
+| `TEST_DATABASE_URL` | backend tests | Optional disposable PostgreSQL URL; the database name must contain `test`. |
+| `VALSCORES_DB_PORT` | Compose | Host port for the development database (default 5432). |
+| `VALSCORES_TEST_DB_PORT` | Compose | Host port for the test database (default 5433). |
+| `VALSCORES_API_BASE_URL` | iOS app | Backend URL; see below. Listed in `.env.example` for reference only. |
+
+Uvicorn loads `.env` through `--env-file`. For other commands, export it into your
+shell first:
+
+```bash
+set -a && source .env && set +a
+```
+
+For example, to initialize the schema without starting the server:
+
+```bash
+python -m valoreal.database_setup
+```
+
+## Tests
+
+All suites are offline: scraper tests read frozen HTML from `tests/fixtures/`, and
+the iOS tests use an injected `URLProtocol`. Neither VLR nor a running backend is
+needed.
+
+### Backend regression suite
+
+Tests never use `DATABASE_URL`. The test helpers replace it before importing the
+backend, so a development database configured in your shell or `.env` is never
+opened.
+
+Fast feedback with isolated, throwaway SQLite databases:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+Canonical PostgreSQL verification against the disposable `test-db` service. It
+stores data in tmpfs and is separate from the development `db` service:
+
+```bash
+docker compose --profile test up -d --wait test-db
+TEST_DATABASE_URL='postgresql+psycopg://valscores:valscores@localhost:5433/valscores_test' \
+PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+To make PostgreSQL the default, uncomment `TEST_DATABASE_URL` in `.env`; tests
+then fail with `Connection refused` whenever `test-db` is not running.
+
+Each database-backed test creates its own schema and drops it on teardown. The
+helpers refuse a `TEST_DATABASE_URL` whose database name does not contain `test`
+or that equals `DATABASE_URL`. Stop the test database with
+`docker compose --profile test down`.
+
+The suite covers list/detail parsing, persistence identity and rollback,
+constraints and cascades, UTC timestamps, typed API contracts, refresh
+transitions/concurrency, and representative partial failures. SQLite-only legacy
+migration tests document the historical data format and are not part of runtime
+startup. One test deliberately triggers an `IntegrityError`, so a logged
+`Could not persist VLR match ... NotNullViolation` line in passing output is
+expected.
+
+### iOS unit tests
+
+The shared `valoreal` scheme builds the app and runs the `ValScoresTests` XCTest
+target. Use Xcode's Test action (`Command-U`), or:
+
+```bash
+scripts/ios-test.sh
+```
+
+The script picks the first available iPhone simulator; set
+`IOS_SIMULATOR="iPhone 16e"` to choose one. Extra arguments are passed to
+`xcodebuild`. If you cannot change `xcode-select`, prefix the command with
+`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`.
+
+The earlier portable Swift regression executables remain available as
+lightweight compiler checks:
+
+```bash
+swiftc -parse-as-library valoreal/MatchTimeContract.swift tests/ValScoresTimeContractTests/MatchTimeContractTests.swift -o /tmp/valscores-time-contract-tests
+/tmp/valscores-time-contract-tests
+swiftc -parse-as-library valoreal/MatchTimeContract.swift valoreal/APIModels.swift valoreal/APIClient.swift tests/ValScoresAPIClientTests/APIClientTests.swift -o /tmp/valscores-api-client-tests
+/tmp/valscores-api-client-tests
+swiftc -parse-as-library valoreal/MatchTimeContract.swift valoreal/APIModels.swift valoreal/APIClient.swift valoreal/VLRDataManager.swift tests/ValScoresTimelineStateTests/TimelineStateTests.swift -o /tmp/valscores-timeline-state-tests
+/tmp/valscores-timeline-state-tests
+swiftc -parse-as-library valoreal/MatchTimeContract.swift valoreal/APIModels.swift valoreal/APIClient.swift valoreal/MatchDetailState.swift tests/ValScoresMatchDetailTests/MatchDetailStateTests.swift -o /tmp/valscores-match-detail-tests
+/tmp/valscores-match-detail-tests
+```
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every pull request and on pushes to `main`:
+
+- **Backend** (Ubuntu, Python 3.12 and 3.13): the regression suite against a
+  per-job PostgreSQL 17 service container, then again in SQLite mode.
+- **iOS** (macOS 26): the portable Swift checks, then `scripts/ios-test.sh`. The
+  `.xcresult` bundle is uploaded when tests fail.
 
 ## PostgreSQL database
 
 PostgreSQL is the canonical development and runtime database. Starting the FastAPI
 application creates the current SQLAlchemy schema when the configured database is
-empty. You can initialize it explicitly without starting the server:
-
-```bash
-python -m valoreal.database_setup
-```
+empty.
 
 Runtime startup never reads, copies, migrates, or deletes
 `valoreal/valorant_stats.db`. The historical SQLite migration code remains only for
@@ -108,61 +251,13 @@ For a physical iPhone, put the Mac and phone on the same LAN, replace the sample
 address below with the Mac's LAN IP, and start Uvicorn on all interfaces:
 
 ```bash
-python -m uvicorn valoreal.api:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn valoreal.api:app --reload --env-file .env --host 0.0.0.0 --port 8000
 ```
 
-Then set the scheme environment variable or launch argument described above. The
-committed Info.plist contains the local-network permission required for this V1
-development setup. No view or data manager needs to be edited when the host changes.
-
-## Backend regression suite
-
-```bash
-python -m pip install -e '.[test]'
-```
-
-For fast feedback, the suite defaults to isolated SQLite databases:
-
-```bash
-PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -p 'test_*.py' -v
-```
-
-For canonical persistence and API verification, point `TEST_DATABASE_URL` at a
-disposable PostgreSQL database. Each database-backed test creates a unique schema,
-so it does not truncate or drop existing schemas:
-
-```bash
-TEST_DATABASE_URL='postgresql+psycopg://valscores:valscores@localhost:5432/valscores' \
-PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -p 'test_*.py' -v
-```
-
-Both modes use frozen VLR HTML and require no upstream network access. The suite
-covers list/detail parsing, persistence identity and rollback, constraints and
-cascades, UTC timestamps, typed API contracts, refresh transitions/concurrency,
-and representative partial failures. SQLite-only legacy migration tests remain to
-document the historical data format; they are not part of runtime startup.
-
-## iOS unit tests
-
-The shared `valoreal` scheme includes the `ValScoresTests` XCTest target. Run it
-with Xcode's Test action (`Command-U`) or from the repository root with an
-installed simulator destination:
-
-```bash
-xcodebuild -project valoreal.xcodeproj -scheme valoreal -destination 'platform=iOS Simulator,name=iPhone 16e,OS=latest' test
-```
-
-These tests use an injected `URLProtocol`; neither VLR nor the Python backend
-needs to be running. The earlier portable Swift regression executables remain
-available as lightweight compiler checks:
-
-```bash
-swiftc -parse-as-library valoreal/MatchTimeContract.swift tests/ValScoresTimeContractTests/MatchTimeContractTests.swift -o /tmp/valscores-time-contract-tests
-/tmp/valscores-time-contract-tests
-swiftc -parse-as-library valoreal/MatchTimeContract.swift valoreal/APIModels.swift valoreal/APIClient.swift tests/ValScoresAPIClientTests/APIClientTests.swift -o /tmp/valscores-api-client-tests
-/tmp/valscores-api-client-tests
-swiftc -parse-as-library valoreal/MatchTimeContract.swift valoreal/APIModels.swift valoreal/APIClient.swift valoreal/VLRDataManager.swift tests/ValScoresTimelineStateTests/TimelineStateTests.swift -o /tmp/valscores-timeline-state-tests
-/tmp/valscores-timeline-state-tests
-swiftc -parse-as-library valoreal/MatchTimeContract.swift valoreal/APIModels.swift valoreal/APIClient.swift valoreal/MatchDetailState.swift tests/ValScoresMatchDetailTests/MatchDetailStateTests.swift -o /tmp/valscores-match-detail-tests
-/tmp/valscores-match-detail-tests
-```
+Then supply the URL as a scheme environment variable or launch argument. The
+`valoreal` scheme is shared and committed, so do not save a personal LAN address
+in it: use Product > Scheme > Manage Schemes to duplicate it, leave the copy
+unshared (it is stored under the ignored `xcuserdata/`), and set the value there.
+The committed Info.plist contains the local-network permission required for this
+V1 development setup. No view or data manager needs to be edited when the host
+changes.

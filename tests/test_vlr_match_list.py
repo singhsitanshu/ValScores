@@ -1,11 +1,10 @@
 from pathlib import Path
-import os
 import unittest
 import warnings
 
 import requests
 
-os.environ.setdefault("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", "sqlite://"))
+import database_support  # noqa: F401  Isolates DATABASE_URL before backend imports.
 
 from valoreal.vlreal import (
     DEFAULT_HTTP_TIMEOUT,

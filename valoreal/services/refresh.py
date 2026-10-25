@@ -54,7 +54,10 @@ class RefreshService:
 
     def _refresh(self, limit, details_limit, results_limit):
         scraper = self.scraper_factory()
+        # Failures: something could not be fetched, parsed or stored. Warnings:
+        # data was stored, but VLR left some optional fields unreadable or empty.
         failures = []
+        warnings = []
 
         schedule = self._load_source(
             scraper,
@@ -62,6 +65,7 @@ class RefreshService:
             scraper.get_matches,
             limit,
             failures,
+            warnings,
         )
         results = self._load_source(
             scraper,
@@ -69,6 +73,7 @@ class RefreshService:
             scraper.get_results,
             results_limit,
             failures,
+            warnings,
         )
 
         matches_examined = len(schedule) + len(results) + sum(
@@ -128,11 +133,11 @@ class RefreshService:
             if detail_loaded:
                 counters["details_refreshed"] += 1
                 for warning in details.get("parse_warnings", []):
-                    failures.append({
+                    warnings.append({
                         "stage": "detail_warning",
                         "vlr_match_id": match_id,
                         "url": record["url"],
-                        "error": warning,
+                        "message": warning,
                     })
 
         persisted_count = counters["inserted"] + counters["updated"] + counters["unchanged"]
@@ -149,9 +154,11 @@ class RefreshService:
             **counters,
             "failure_count": len(failures),
             "failures": failures,
+            "warning_count": len(warnings),
+            "warnings": warnings,
         }
 
-    def _load_source(self, scraper, source, loader, item_limit, failures):
+    def _load_source(self, scraper, source, loader, item_limit, failures, warnings):
         try:
             records = loader()
         except MatchListParseError as exc:
@@ -161,14 +168,19 @@ class RefreshService:
             failures.append(self._failure(f"{source}_fetch", exc))
             return []
 
-        parse_failures = list(scraper.last_list_parse_failures)
-        for failure in parse_failures:
+        # A skipped card is a match that was not ingested, so it is a failure.
+        for failure in scraper.last_list_parse_failures:
             failures.append({
                 "stage": "list_parse",
                 "source": source,
                 **failure,
             })
-        return records[:item_limit]
+        records = records[:item_limit]
+        kept_ids = {record["vlr_match_id"] for record in records}
+        for warning in scraper.last_list_parse_warnings:
+            if warning.get("vlr_match_id") in kept_ids:
+                warnings.append({"stage": "list_warning", "source": source, **warning})
+        return records
 
     def _merge_records(self, records):
         merged_by_id = {}
@@ -201,11 +213,13 @@ class RefreshService:
                 if candidate.get(key) is not None:
                     existing[key] = candidate[key]
 
-            if status_rank(candidate.get("status")) >= status_rank(existing.get("status")):
-                existing["status"] = normalize_match_status(
-                    candidate.get("status"), MATCH_STATUS_UPCOMING
-                )
-            existing["is_live"] = existing["status"] == MATCH_STATUS_LIVE
+            candidate_status = normalize_match_status(candidate.get("status"))
+            if candidate_status is not None and (
+                existing.get("status") is None
+                or status_rank(candidate_status) >= status_rank(existing.get("status"))
+            ):
+                existing["status"] = candidate_status
+            existing["is_live"] = existing.get("status") == MATCH_STATUS_LIVE
 
         return [merged_by_id[match_id] for match_id in order]
 
@@ -279,13 +293,19 @@ class RefreshService:
 
 def public_refresh_result(result):
     """Present a refresh result with slash-free upstream match IDs."""
-    failures = [
-        {**failure, "vlr_match_id": public_vlr_match_id(failure["vlr_match_id"])}
-        if failure.get("vlr_match_id")
-        else failure
-        for failure in result.get("failures", [])
-    ]
-    return {**result, "failures": failures}
+    def public(entries):
+        return [
+            {**entry, "vlr_match_id": public_vlr_match_id(entry["vlr_match_id"])}
+            if entry.get("vlr_match_id")
+            else entry
+            for entry in entries
+        ]
+
+    return {
+        **result,
+        "failures": public(result.get("failures", [])),
+        "warnings": public(result.get("warnings", [])),
+    }
 
 
 if __name__ == "__main__":

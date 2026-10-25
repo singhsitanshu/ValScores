@@ -226,6 +226,29 @@ class DatabaseIdentityTests(unittest.TestCase):
             self.save(match_payload(team2=None), details_payload())
         self.assertEqual(self.counts(), (0, 0, 0))
 
+        # A failing update leaves the previously stored match exactly as it was.
+        self.save(match_payload(status="Finished", team1_score="2", team2_score="0"), details_payload())
+        before = self.snapshot()
+        broken = details_payload()
+        broken["games"].append({"game_id": "map-9", "map_number": 9, "map_name": "Lotus",
+                                "player_stats": [{"player": "No Team"}]})
+        with self.assertRaises(KeyError):
+            self.save(match_payload(team1="Renamed", status="Finished", team1_score="1",
+                                    team2_score="2"), broken)
+        self.assertEqual(self.snapshot(), before)
+
+    def snapshot(self):
+        session = self.session_factory()
+        try:
+            match = session.query(Match).one()
+            return (
+                (match.team1_name, match.status, match.team1_series_score, match.team2_series_score),
+                sorted((game.vlr_game_id, game.map_name) for game in session.query(Game)),
+                sorted((p.player_name, p.kills) for p in session.query(PlayerStat)),
+            )
+        finally:
+            session.close()
+
     def test_foreign_keys_are_enforced_and_delete_cascades(self):
         if self.engine.dialect.name == "sqlite":
             with self.engine.connect() as connection:

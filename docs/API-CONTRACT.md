@@ -194,11 +194,23 @@ The only endpoint that contacts VLR and writes to the database. Query parameters
 `limit` (1–100, default 50), `details_limit` (0–50, default 12), `results_limit`
 (0–200, default 100).
 
-The response is `200` whenever the refresh ran, even if every step failed; check
-`status`: `success` (no failures), `partial` (some failures, some data written) or
-`failed` (nothing usable). Each entry in `failures` names the `stage` that failed and
-an `error` message, plus whatever context is known. Example:
-[refresh_partial.json](../tests/fixtures/api/refresh_partial.json).
+The response is `200` whenever the refresh ran, even if every step failed. Check
+`status`:
+
+- `success`: no failures (warnings allowed);
+- `partial`: some failures, some data written;
+- `failed`: failures and nothing written.
+
+Problems are reported in two separate lists:
+
+| List | Stages | Meaning |
+| --- | --- | --- |
+| `failures` | `schedule_fetch`, `results_fetch`, `schedule_parse`, `results_parse`, `list_parse` (a skipped card), `detail_fetch`, `detail_planning`, `persistence` | Something could not be fetched, parsed or stored. Only these affect `status` and `failure_count`. |
+| `warnings` | `list_warning` (a card stored with an unreadable status, time or score; includes `field`), `detail_warning` (a match stored although VLR omitted some statistics) | The data was stored. Counted in `warning_count`. |
+
+Each failure has an `error` message, and each warning has a `message`, plus
+whatever context is known (`source`, `vlr_match_id`, `url`, `card_index`, `href`).
+Example: [refresh_partial.json](../tests/fixtures/api/refresh_partial.json).
 
 Only one refresh runs at a time; a concurrent request gets `409 refresh_in_progress`.
 
@@ -221,6 +233,19 @@ Only one refresh runs at a time; a concurrent request gets `409 refresh_in_progr
       "url": "https://www.vlr.gg/730002",
       "card_index": null,
       "href": null
+    }
+  ],
+  "warning_count": 1,
+  "warnings": [
+    {
+      "stage": "detail_warning",
+      "message": "Haven: player leaf is missing kast",
+      "source": null,
+      "vlr_match_id": "730003",
+      "url": "https://www.vlr.gg/730003",
+      "card_index": null,
+      "href": null,
+      "field": null
     }
   ]
 }
@@ -293,6 +318,7 @@ This contract (overhaul ticket 02) changed both sides together:
 | Player stats | unavailable values sent as `0`, `"0"`, `"0%"`; `plus_minus`/`kast` strings; `role` `""` | `null` when unavailable; `plus_minus` integer, `kast` number, `role` nullable |
 | Unknown route / 405 | codes `http_404` / `http_405` | `not_found` / `method_not_allowed` |
 | Unhandled server errors | plain-text `Internal Server Error` | `500` with `internal_error` envelope |
+| Refresh warnings (ticket 06) | parse warnings were `detail_warning` entries in `failures` and made a refresh `partial` | separate `warnings` and `warning_count`; `status` and `failure_count` reflect failures only |
 
 The scraper and persistence layer now keep missing values as `NULL` instead of
 storing zeros. Rows written before this change may still contain zeros that were

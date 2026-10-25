@@ -133,13 +133,13 @@ Within a list page, a card missing identity data (match link, either team name)
 is skipped and reported in `last_list_parse_failures`. If every card is skipped,
 the page fails. A card whose optional fields cannot be read (status, time, scores)
 is kept and reported in `last_list_parse_warnings`. Both carry the page `url`,
-`card_index` and `href`. Refresh results include skipped cards but not yet these
-warnings (see A6 in [OVERHAUL-01-baseline.md](OVERHAUL-01-baseline.md)).
+`card_index` and `href`. A refresh reports skipped cards as `failures` and kept
+cards' problems as `warnings` (see the [API contract](API-CONTRACT.md)).
 
 **Records** follow the [API contract](API-CONTRACT.md):
 
 - match IDs are canonical (`/<id>`);
-- statuses are one of the five contract values;
+- statuses are one of the five contract values, or `None` when a card's status is unreadable;
 - times are ISO-8601 UTC;
 - scores and counting stats are `int`, and `k_d` is a `float`;
 - `plus_minus` is signed text (`"+7"`) and `kast` is percent text (`"78%"`);

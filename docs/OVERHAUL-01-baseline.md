@@ -128,6 +128,9 @@ so the same team gets a different palette entry each launch. A deterministic has
 
 ### A6. Parse warnings make successful refreshes report `partial`
 
+**Resolved in ticket 06**: warnings are returned in a separate `warnings` list
+with `warning_count`; `status` and `failure_count` count only real failures.
+
 Found during ticket 04. Reproduce: refresh while a match is live, e.g.
 `curl -X POST 'http://127.0.0.1:8000/api/matches/refresh?limit=30&details_limit=8'`.
 Every match is stored, but each player VLR has not published every stat for yet

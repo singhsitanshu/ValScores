@@ -97,6 +97,8 @@ class MatchStatusPersistenceTests(unittest.TestCase):
     def test_postponed_match_can_be_rescheduled_but_finished_never_regresses(self):
         self.assertEqual(self.persist("Upcoming").status, "upcoming")
         self.assertEqual(self.persist("Postponed").status, "postponed")
+        # An unreadable status (None) is not an observation and changes nothing.
+        self.assertEqual(self.persist(None).status, "postponed")
         self.assertEqual(self.persist("Upcoming").status, "upcoming")
         self.assertEqual(self.persist("LIVE").status, "live")
         self.assertEqual(self.persist("Upcoming").status, "live")

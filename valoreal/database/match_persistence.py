@@ -211,10 +211,14 @@ def persist_match(match_dict, details_dict, session_factory=None):
             details_dict.get('team2'),
             match_dict.get('team2'),
         )
-        list_status = normalize_match_status(
-            match_dict.get('status'), MATCH_STATUS_UPCOMING
-        )
-        status = resolve_status_transition(list_status, details_dict.get('status'))
+        # None means "not observed": an unreadable status never changes a stored one.
+        list_status = normalize_match_status(match_dict.get('status'))
+        detail_status = normalize_match_status(details_dict.get('status'))
+        if list_status is None:
+            observed_status = detail_status
+        else:
+            observed_status = resolve_status_transition(list_status, detail_status)
+        status = observed_status or MATCH_STATUS_UPCOMING
 
         if not db_match:
             db_match = Match(
@@ -227,7 +231,8 @@ def persist_match(match_dict, details_dict, session_factory=None):
             )
             session.add(db_match)
         else:
-            db_match.status = resolve_status_transition(db_match.status, status)
+            if observed_status is not None:
+                db_match.status = resolve_status_transition(db_match.status, observed_status)
             if best_time:
                 db_match.start_time = best_time
             elif not db_match.start_time and legacy_time and not db_match.legacy_start_time:

@@ -98,6 +98,8 @@ final class APIContractFixtureTests: ValScoresTestCase {
         let refresh = try decode(RefreshResponse.self, from: "refresh_partial.json")
         XCTAssertEqual(refresh.status, "partial")
         XCTAssertEqual(refresh.failures.first?.vlr_match_id, "730002")
+        XCTAssertEqual(refresh.warning_count, refresh.warnings.count)
+        XCTAssertEqual(refresh.warnings.first?.stage, "detail_warning")
     }
 
     func testErrorFixturesDecodeToKnownCodes() throws {

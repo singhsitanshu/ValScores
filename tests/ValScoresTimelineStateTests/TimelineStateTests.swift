@@ -231,7 +231,7 @@ struct TimelineStateTests {
 
     static func matchJSON(id: Int, team1: String, startTime: String) -> String {
         """
-        [{"id":\(id),"team1":"\(team1)","team2":"Opponent","team1_score":null,
+        [{"id":\(id),"vlr_match_id":"\(700000 + id)","team1":"\(team1)","team2":"Opponent","team1_score":null,
         "team2_score":null,"status":"upcoming","start_time":"\(startTime)",
         "is_live":false,"is_finished":false,"team1_round_score":null,
         "team2_round_score":null}]

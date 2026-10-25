@@ -49,7 +49,7 @@ class DatabaseTimeContractTests(unittest.TestCase):
             run_isolated_backend(
                 database_path,
                 """
-                from valoreal.database_setup import migrate_match_time_contract
+                from valoreal.database.legacy_sqlite import migrate_match_time_contract
 
                 # A second pass verifies that startup migration is idempotent.
                 migrate_match_time_contract()
@@ -76,20 +76,21 @@ class DatabaseTimeContractTests(unittest.TestCase):
                 import json
                 from datetime import datetime, timezone
 
-                from valoreal import api
-                from valoreal.api_models import TimelineMatchResponse
-                from valoreal.database_setup import Match, initialize_database
+                from valoreal.api import routes
+                from valoreal.api.schemas import TimelineMatchResponse
+                from valoreal.database.connection import SessionLocal, engine
+                from valoreal.database.models import Base, Match
 
-                initialize_database()
+                Base.metadata.create_all(engine)
 
-                session = api.SessionLocal()
+                session = SessionLocal()
                 session.add_all([
                     Match(
                         vlr_match_id="/1",
                         team1_name="Alpha",
                         team2_name="Bravo",
                         start_time=datetime(2026, 9, 6, 13, 0, tzinfo=timezone.utc),
-                        status="Upcoming",
+                        status="upcoming",
                     ),
                     Match(
                         vlr_match_id="/2",
@@ -97,15 +98,16 @@ class DatabaseTimeContractTests(unittest.TestCase):
                         team2_name="Delta",
                         start_time=None,
                         legacy_start_time="12:00 PM",
-                        status="Upcoming",
+                        status="upcoming",
                     ),
                 ])
                 session.commit()
                 session.close()
 
-                timeline = api.get_timeline(
+                timeline = routes.get_timeline(
                     datetime(2026, 9, 1, tzinfo=timezone.utc),
                     datetime(2026, 9, 10, tzinfo=timezone.utc),
+                    session_factory=SessionLocal,
                 )
                 print(json.dumps([
                     TimelineMatchResponse.model_validate(item).model_dump(mode="json")

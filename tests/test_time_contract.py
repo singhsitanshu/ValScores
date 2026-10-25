@@ -2,7 +2,7 @@ from datetime import timedelta, timezone
 import unittest
 from zoneinfo import ZoneInfo
 
-from valoreal.time_contract import (
+from valoreal.domain.time_contract import (
     choose_canonical_match_timestamp,
     normalize_explicit_utc_timestamp,
     normalize_vlr_utc_timestamp,

@@ -1,0 +1,33 @@
+{
+  "status": "partial",
+  "matches_examined": 12,
+  "inserted": 2,
+  "updated": 3,
+  "unchanged": 6,
+  "details_refreshed": 4,
+  "failure_count": 1,
+  "failures": [
+    {
+      "stage": "detail_fetch",
+      "error": "429 Too Many Requests",
+      "source": null,
+      "vlr_match_id": "730002",
+      "url": "https://www.vlr.gg/730002",
+      "card_index": null,
+      "href": null
+    }
+  ],
+  "warning_count": 1,
+  "warnings": [
+    {
+      "stage": "detail_warning",
+      "message": "Haven: player leaf is missing kast",
+      "source": null,
+      "vlr_match_id": "730003",
+      "url": "https://www.vlr.gg/730003",
+      "card_index": null,
+      "href": null,
+      "field": null
+    }
+  ]
+}

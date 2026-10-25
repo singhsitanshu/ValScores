@@ -7,9 +7,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from database_support import close_test_engine, create_test_engine
-from valoreal import api
-from valoreal.database_setup import Base, Game, Match, PlayerStat
-from valoreal.refresh_service import RefreshInProgressError
+from valoreal.api import app
+from valoreal.api.dependencies import get_refresh_service, get_session_factory
+from valoreal.database.models import Base, Game, Match, PlayerStat
+from valoreal.services.refresh import RefreshInProgressError
 
 
 class APIContractTests(unittest.TestCase):
@@ -25,16 +26,16 @@ class APIContractTests(unittest.TestCase):
             autocommit=False,
             autoflush=False,
         )
-        self.original_session_factory = api.SessionLocal
-        self.original_refresh_service = api.match_refresh_service
-        api.SessionLocal = self.session_factory
-        self.client = TestClient(api.app)
+        app.dependency_overrides[get_session_factory] = lambda: self.session_factory
+        self.client = TestClient(app)
         self._seed_database()
 
     def tearDown(self):
-        api.SessionLocal = self.original_session_factory
-        api.match_refresh_service = self.original_refresh_service
+        app.dependency_overrides.clear()
         close_test_engine(self.engine)
+
+    def use_refresh_service(self, service):
+        app.dependency_overrides[get_refresh_service] = lambda: service
 
     def _seed_database(self):
         session = self.session_factory()
@@ -43,8 +44,8 @@ class APIContractTests(unittest.TestCase):
                 vlr_match_id="/101",
                 team1_name="Alpha Five",
                 team2_name="Bravo Crew",
-                team1_round_score="13",
-                team2_round_score="9",
+                team1_round_score=13,
+                team2_round_score=9,
                 start_time=datetime(2026, 9, 7, 1, 30, tzinfo=timezone.utc),
                 status="finished",
                 team1_series_score=1,
@@ -168,15 +169,17 @@ class APIContractTests(unittest.TestCase):
         self.assertEqual(len(response.json()), 1)
         match = response.json()[0]
         self.assertEqual(match["start_time"], "2026-09-07T01:30:00Z")
+        self.assertEqual((match["id"], match["vlr_match_id"]), (1, "101"))
         self.assertIsInstance(match["team1_score"], int)
-        self.assertIsInstance(match["team1_round_score"], int)
+        # Round scores describe the map in progress; finished matches report null.
+        self.assertIsNone(match["team1_round_score"])
 
     def test_timeline_and_stats_gets_do_not_mutate_database_or_refresh(self):
         class ForbiddenRefreshService:
             def refresh(self, **_kwargs):
                 raise AssertionError("read endpoint invoked refresh")
 
-        api.match_refresh_service = ForbiddenRefreshService()
+        self.use_refresh_service(ForbiddenRefreshService())
         before = self.database_counts()
         timeline = self.client.get("/api/matches/timeline", params=self.timeline_params())
         stats = self.client.get("/api/matches/1/stats", params={"game_id": "map-1"})
@@ -197,8 +200,11 @@ class APIContractTests(unittest.TestCase):
         self.assertEqual(payload["team1_roster"][0]["team_abbreviation"], "AF")
         self.assertEqual(payload["team2_roster"][0]["team_abbreviation"], "UNRELATED")
         self.assertEqual(payload["team1_roster"][0]["role"], "duelist")
-        for key in ("acs", "kd", "adr", "kills", "deaths", "assists"):
-            self.assertIsNotNone(payload["team2_roster"][0][key])
+        self.assertEqual(payload["team1_roster"][0]["plus_minus"], 7)
+        self.assertEqual(payload["team1_roster"][0]["kast"], 78.0)
+        # Bolt has no persisted stats: every value is unavailable, never zero.
+        for key in ("role", "acs", "kd", "adr", "kills", "deaths", "assists", "plus_minus", "kast"):
+            self.assertIsNone(payload["team2_roster"][0][key])
 
     def test_nullable_scores_and_empty_stats_follow_the_typed_contract(self):
         session = self.session_factory()
@@ -320,10 +326,12 @@ class APIContractTests(unittest.TestCase):
                     "details_refreshed": 0,
                     "failure_count": 0,
                     "failures": [],
+                    "warning_count": 0,
+                    "warnings": [],
                 }
 
         service = SuccessfulRefreshService()
-        api.match_refresh_service = service
+        self.use_refresh_service(service)
 
         self.assertEqual(self.client.get("/api/matches/refresh").status_code, 405)
         too_large = self.client.post("/api/matches/refresh", params={"limit": 101})
@@ -345,7 +353,7 @@ class APIContractTests(unittest.TestCase):
             def refresh(self, **_kwargs):
                 raise RefreshInProgressError("A match refresh is already in progress")
 
-        api.match_refresh_service = BusyRefreshService()
+        self.use_refresh_service(BusyRefreshService())
         response = self.client.post("/api/matches/refresh")
 
         self.assertEqual(response.status_code, 409)
@@ -369,9 +377,11 @@ class APIContractTests(unittest.TestCase):
                             "error": "429 Too Many Requests",
                         }
                     ],
+                    "warning_count": 0,
+                    "warnings": [],
                 }
 
-        api.match_refresh_service = PartialRefreshService()
+        self.use_refresh_service(PartialRefreshService())
         response = self.client.post("/api/matches/refresh")
 
         self.assertEqual(response.status_code, 200)

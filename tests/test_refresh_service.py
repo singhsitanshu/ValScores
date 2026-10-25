@@ -7,10 +7,10 @@ from fastapi import HTTPException
 from sqlalchemy.orm import sessionmaker
 
 from database_support import close_test_engine, create_test_engine
-from valoreal import api
-from valoreal.database_setup import Base, Game, Match, PlayerStat
-from valoreal.refresh_service import RefreshInProgressError, RefreshService
-from valoreal.vlreal import PersistenceOutcome, persist_match
+from valoreal.api import routes
+from valoreal.database.match_persistence import PersistenceOutcome, persist_match
+from valoreal.database.models import Base, Game, Match, PlayerStat
+from valoreal.services.refresh import RefreshInProgressError, RefreshService
 
 
 def match_record(match_id="/900001", status="upcoming", **overrides):
@@ -79,15 +79,19 @@ class FakeScraper:
         self.schedule = [] if schedule is None else schedule
         self.results = [] if results is None else results
         self.details = {} if details is None else details
+        self.list_warnings = {"schedule": (), "results": ()}
         self.last_list_parse_failures = ()
+        self.last_list_parse_warnings = ()
         self.detail_calls = []
 
     def get_matches(self):
+        self.last_list_parse_warnings = tuple(self.list_warnings["schedule"])
         if isinstance(self.schedule, Exception):
             raise self.schedule
         return [dict(record) for record in self.schedule]
 
     def get_results(self):
+        self.last_list_parse_warnings = tuple(self.list_warnings["results"])
         if isinstance(self.results, Exception):
             raise self.results
         return [dict(record) for record in self.results]
@@ -99,6 +103,11 @@ class FakeScraper:
         if isinstance(result, Exception):
             raise result
         return result
+
+
+def list_warning(match_id="/900001", field="scheduled_time"):
+    return {"url": "https://www.vlr.gg/matches", "card_index": 1, "href": match_id,
+            "vlr_match_id": match_id, "field": field, "message": f"unreadable {field}"}
 
 
 class RefreshServiceTests(unittest.TestCase):
@@ -254,11 +263,36 @@ class RefreshServiceTests(unittest.TestCase):
         self.assertEqual(second["details_refreshed"], 1)
         self.assertEqual(self.database_counts(), (1, 1, 1))
 
+    def test_warning_only_refresh_reports_success_and_exposes_warnings(self):
+        # Baseline bug A6: harmless warnings used to be counted as failures.
+        self.scraper.schedule = [match_record("/900001", status=None)]
+        self.scraper.results = [match_record("/900002", status="finished",
+                                             team1_score="2", team2_score="0")]
+        self.scraper.list_warnings["schedule"] = [list_warning("/900001", "status"),
+                                                  list_warning("/900999", "status")]
+        partial_stats = final_details(stats_status="partial",
+                                      parse_warnings=["Haven: player Ace is missing kast"])
+        self.scraper.details = {"/900002": partial_stats}
+
+        result = self.service.refresh()
+
+        self.assertEqual((result["status"], result["inserted"], result["failure_count"]),
+                         ("success", 2, 0))
+        # Warnings for cards that were not kept (/900999) are not reported.
+        self.assertEqual(result["warning_count"], 2)
+        self.assertEqual(
+            [(w["stage"], w["vlr_match_id"]) for w in result["warnings"]],
+            [("list_warning", "/900001"), ("detail_warning", "/900002")],
+        )
+        self.assertEqual(result["warnings"][0]["source"], "schedule")
+        self.assertEqual(result["warnings"][1]["message"], "Haven: player Ace is missing kast")
+
     def test_persistence_failure_is_not_counted_as_success(self):
         self.scraper.schedule = [
             match_record("/900001"),
             match_record("/900002"),
         ]
+        self.scraper.list_warnings["schedule"] = [list_warning("/900001")]
 
         def partially_failing_persistence(record, details, session_factory=None):
             if record["vlr_match_id"] == "/900002":
@@ -280,6 +314,8 @@ class RefreshServiceTests(unittest.TestCase):
         self.assertEqual(result["unchanged"], 0)
         self.assertEqual(result["failure_count"], 1)
         self.assertEqual(result["failures"][0]["stage"], "persistence")
+        # Warnings are reported alongside but never counted as failures.
+        self.assertEqual(result["warning_count"], 1)
 
     def test_total_persistence_failure_reports_failed_with_zero_successes(self):
         self.scraper.schedule = [match_record()]
@@ -341,8 +377,8 @@ class RefreshServiceTests(unittest.TestCase):
         partial["games"][0]["player_stats"] = [
             {
                 **player("Ace", "ALP", "22"),
-                "acs": "0",
-                "adr": "0",
+                "acs": None,
+                "adr": None,
             }
         ]
         persist_match(
@@ -400,12 +436,8 @@ class RefreshEndpointTests(unittest.TestCase):
             def refresh(self, **_kwargs):
                 raise RefreshInProgressError("A match refresh is already in progress")
 
-        original = api.match_refresh_service
-        api.match_refresh_service = BusyService()
-        self.addCleanup(setattr, api, "match_refresh_service", original)
-
         with self.assertRaises(HTTPException) as raised:
-            api.force_refresh_matches()
+            routes.force_refresh_matches(refresh_service=BusyService())
 
         self.assertEqual(raised.exception.status_code, 409)
 

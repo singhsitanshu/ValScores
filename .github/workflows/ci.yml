@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    services:
+      # Disposable per-job database; it is destroyed with the runner.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: valscores_test
+          POSTGRES_USER: valscores
+          POSTGRES_PASSWORD: valscores
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U valscores -d valscores_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install backend with test extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[test]'
+      - name: Regression suite (PostgreSQL)
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://valscores:valscores@localhost:5432/valscores_test
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Regression suite (isolated SQLite)
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+
+  ios:
+    name: iOS
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Portable Swift regression checks
+        run: SWIFT_CHECKS_OUT="$RUNNER_TEMP/swift-checks" scripts/swift-checks.sh
+      - name: XCTest (shared valoreal scheme)
+        run: scripts/ios-test.sh -resultBundlePath "$RUNNER_TEMP/ValScoresTests.xcresult"
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ValScoresTests.xcresult
+          path: ${{ runner.temp }}/ValScoresTests.xcresult

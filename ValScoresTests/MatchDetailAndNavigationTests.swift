@@ -76,14 +76,15 @@ final class MatchDetailAndNavigationTests: ValScoresTestCase {
                     name: $0,
                     team: "Alpha Five",
                     team_abbreviation: "AF",
+                    role: "duelist",
                     acs: 245,
                     kd: 1.5,
                     adr: 160,
                     kills: 21,
                     deaths: 14,
                     assists: 7,
-                    plus_minus: "+7",
-                    kast: "78%",
+                    plus_minus: 7,
+                    kast: 78.0,
                     first_kills: 4,
                     first_deaths: 1
                 )
@@ -92,8 +93,11 @@ final class MatchDetailAndNavigationTests: ValScoresTestCase {
 
         return MatchStatsResponse(
             match_info: MatchStatsInfo(
+                match_id: 42,
+                vlr_match_id: "700042",
                 team1: "Alpha Five",
                 team2: "Bravo Crew",
+                status: .finished,
                 map_vetoes: [],
                 selected_game_id: gameID,
                 maps: []

@@ -64,6 +64,9 @@ def backend_imports(top_level_only=False):
     return graph
 
 
+ALEMBIC_SCRIPTS = "valoreal.database.migrations."
+
+
 def layer(module):
     parts = module.split(".")
     return parts[1] if len(parts) > 1 else None
@@ -121,8 +124,21 @@ class BackendStructureTests(unittest.TestCase):
                 visit(module, [module])
         self.assertEqual(cycles, [])
 
+    def test_legacy_sqlite_migrations_are_isolated(self):
+        importers = sorted(
+            module
+            for module, imports in backend_imports().items()
+            if "valoreal.database.legacy_sqlite" in imports
+        )
+        self.assertEqual(importers, [])
+
     def test_every_module_imports_cleanly_in_a_fresh_interpreter(self):
-        modules = sorted(m for m in backend_imports() if not m.endswith("__main__"))
+        # Alembic loads env.py and revision files itself; importing env.py outside
+        # Alembic would try to run migrations.
+        modules = sorted(
+            m for m in backend_imports()
+            if not m.endswith("__main__") and not m.startswith(ALEMBIC_SCRIPTS)
+        )
         script = "import importlib\n" + "".join(
             f"importlib.import_module({module!r})\n" for module in modules
         )

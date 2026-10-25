@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from database_support import TEST_DATABASE_URL, close_test_engine, create_test_engine
 from valoreal.database.connection import create_sqlite_engine
 from valoreal.database.match_persistence import find_match_for_save, persist_match
-from valoreal.database.migrations import LATEST_SCHEMA_VERSION, run_migrations
+from valoreal.database.legacy_sqlite import LATEST_SCHEMA_VERSION, run_migrations
 from valoreal.database.models import Game, Match, PlayerStat
 
 
@@ -184,7 +184,8 @@ class DatabaseIdentityTests(unittest.TestCase):
             match = session.query(Match).one()
             self.assertEqual(match.status, "live")
             self.assertEqual((match.team1_series_score, match.team2_series_score), (1, 0))
-            self.assertEqual((match.team1_round_score, match.team2_round_score), ("7", "5"))
+            # Integer in the PostgreSQL schema; the legacy SQLite schema stores text.
+            self.assertEqual((int(match.team1_round_score), int(match.team2_round_score)), (7, 5))
         finally:
             session.close()
 
@@ -196,7 +197,7 @@ class DatabaseIdentityTests(unittest.TestCase):
                     vlr_match_id="/12345",
                     team1_name="Alpha",
                     team2_name="Bravo",
-                    status="Finished",
+                    status="finished",
                     team1_series_score=2,
                     team2_series_score=1,
                 ),
@@ -204,7 +205,7 @@ class DatabaseIdentityTests(unittest.TestCase):
                     vlr_match_id="/12345/old-slug",
                     team1_name="TBD",
                     team2_name="TBD",
-                    status="Upcoming",
+                    status="upcoming",
                 ),
             ]
         )

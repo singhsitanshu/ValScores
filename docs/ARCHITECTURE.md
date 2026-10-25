@@ -22,11 +22,15 @@ valoreal/                  Python backend package (uvicorn valoreal.api:app)
     vlr_scraper.py           VlrScraper facade: client + parsers
     errors.py
   database/                Persistence; never touches the network
-    models.py                SQLAlchemy schema
-    connection.py            DATABASE_URL, engine, SessionLocal, initialize_database
+    models.py                SQLAlchemy schema (must match the Alembic head)
+    connection.py            DATABASE_URL, engine, SessionLocal
     match_persistence.py     atomic match/map/player upserts (persist_match)
-    migrations.py            legacy SQLite migrations (tests and explicit use only)
-    __main__.py              python -m valoreal.database
+    migrations/              Alembic env.py and versioned PostgreSQL revisions
+    migrator.py              upgrade / baseline / status, startup schema check
+    schema_inspection.py     catalog snapshots for baseline checks and tests
+    migration_errors.py      conflict and schema-version errors
+    legacy_sqlite.py         historical SQLite migrations (tests only)
+    __main__.py              python -m valoreal.database {upgrade,baseline,status}
   services/                Application logic used by routes
     timeline.py              timeline query and response assembly
     match_stats.py           match statistics response assembly
@@ -83,7 +87,8 @@ api  ──▶  services  ──▶  scraper  ──▶  domain
   session factory in `dependencies.py`).
 
 Only `database/connection.py` creates an engine, and it requires `DATABASE_URL`
-at import. Tests replace route collaborators with
+at import. The API checks the schema revision at startup but never changes the
+schema; see [DATABASE.md](DATABASE.md). Tests replace route collaborators with
 `app.dependency_overrides[get_session_factory]` and `[get_refresh_service]`
 instead of patching module globals.
 
@@ -91,7 +96,7 @@ Useful entry points:
 
 ```bash
 python -m uvicorn valoreal.api:app --reload --env-file .env   # serve the API
-python -m valoreal.database                                   # create the schema
+python -m valoreal.database --env-file .env upgrade           # apply migrations
 python -m valoreal.services.refresh                           # one refresh from the shell
 ```
 

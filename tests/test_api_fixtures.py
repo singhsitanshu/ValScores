@@ -92,7 +92,7 @@ def seed_contract_database(session):
         vlr_match_id="/730002", team1_name="Team Heretics", team2_name="FNATIC",
         start_time=datetime(2026, 9, 7, 10, 0, tzinfo=timezone.utc), status="live",
         team1_series_score=1, team2_series_score=0,
-        team1_round_score="7", team2_round_score="5",
+        team1_round_score=7, team2_round_score=5,
         map_vetoes_raw='["TH ban Bind", "FNC ban Pearl", "TH pick Ascent", "FNC pick Lotus"]',
     )
     live.games.extend([
@@ -115,7 +115,7 @@ def seed_contract_database(session):
         vlr_match_id="/730003", team1_name="Sentinels", team2_name="G2 Esports",
         start_time=datetime(2026, 9, 7, 7, 0, tzinfo=timezone.utc), status="finished",
         team1_series_score=2, team2_series_score=0,
-        team1_round_score="0", team2_round_score="0",
+        team1_round_score=0, team2_round_score=0,
         map_vetoes_raw="[]",
     )
     finished.games.extend([

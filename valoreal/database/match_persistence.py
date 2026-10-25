@@ -238,8 +238,8 @@ def persist_match(match_dict, details_dict, session_factory=None):
                 db_match.team2_name = team2_name
 
         incoming_round_scores = (
-            match_dict.get('team1_round_score'),
-            match_dict.get('team2_round_score'),
+            optional_score_int(match_dict.get('team1_round_score')),
+            optional_score_int(match_dict.get('team2_round_score')),
         )
         if has_meaningful_score(*incoming_round_scores) or not has_meaningful_score(
             db_match.team1_round_score, db_match.team2_round_score

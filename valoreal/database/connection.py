@@ -5,8 +5,6 @@ import os
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
-from .models import Base
-
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
@@ -48,8 +46,3 @@ def create_sqlite_engine(database_url: str, **kwargs):
 
 engine = create_database_engine()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-
-def initialize_database(database_engine=engine) -> None:
-    """Create the canonical schema in a fresh PostgreSQL database."""
-    Base.metadata.create_all(database_engine)

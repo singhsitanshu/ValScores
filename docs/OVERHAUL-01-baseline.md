@@ -126,3 +126,12 @@ sums `scalar.value.hashValue`, and Swift seeds `hashValue` randomly per process,
 so the same team gets a different palette entry each launch. A deterministic hash
 (for example summing the scalar values directly) would fix it.
 
+### A6. Parse warnings make successful refreshes report `partial`
+
+Found during ticket 04. Reproduce: refresh while a match is live, e.g.
+`curl -X POST 'http://127.0.0.1:8000/api/matches/refresh?limit=30&details_limit=8'`.
+Every match is stored, but each player VLR has not published every stat for yet
+adds a `detail_warning` entry to `failures` (70 on one run), so `status` is
+`partial` and `failure_count` is inflated. Warnings about incomplete upstream data
+should be reported separately from failures.
+

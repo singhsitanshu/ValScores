@@ -95,8 +95,8 @@ def latest_started_map_score(games):
 
         started_maps.append((
             game_data.get('map_number') or 0,
-            str(team1_score),
-            str(team2_score)
+            team1_score,
+            team2_score
         ))
 
     if not started_maps:

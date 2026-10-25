@@ -65,13 +65,25 @@ python -m pip install -e '.[test]'
 The editable install reads the pinned dependencies from `pyproject.toml`. No
 separate requirements file or `PYTHONPATH` configuration is needed.
 
-### 4. Start the backend
+### 4. Create the schema
+
+```bash
+python -m valoreal.database --env-file .env upgrade
+```
+
+This applies the versioned Alembic migrations. Re-running it is safe. If your
+database was created by an earlier version of ValScores (before migrations), the
+command asks you to back up and run `baseline` first; see
+[docs/DATABASE.md](docs/DATABASE.md).
+
+### 5. Start the backend
 
 ```bash
 python -m uvicorn valoreal.api:app --reload --env-file .env --host 127.0.0.1 --port 8000
 ```
 
-Startup creates the schema in an empty database. The API is at
+Startup never changes the schema. If the database is missing migrations, the
+server stops with a message naming the command to run. The API is at
 <http://127.0.0.1:8000>, interactive OpenAPI docs at <http://127.0.0.1:8000/docs>,
 and the raw schema at <http://127.0.0.1:8000/openapi.json>. Stop it with `Ctrl-C`.
 
@@ -82,7 +94,7 @@ only endpoint that contacts VLR):
 curl -X POST 'http://127.0.0.1:8000/api/matches/refresh'
 ```
 
-### 5. Launch the iOS app
+### 6. Launch the iOS app
 
 Open `valoreal.xcodeproj` in Xcode, select the shared **valoreal** scheme and any
 iPhone simulator, and press Run (`Command-R`). The simulator reaches the backend
@@ -99,17 +111,17 @@ at `http://127.0.0.1:8000` with no extra configuration. See
 | `VALSCORES_TEST_DB_PORT` | Compose | Host port for the test database (default 5433). |
 | `VALSCORES_API_BASE_URL` | iOS app | Backend URL; see below. Listed in `.env.example` for reference only. |
 
-Uvicorn loads `.env` through `--env-file`. For other commands, export it into your
-shell first:
+Uvicorn and `python -m valoreal.database` load `.env` through `--env-file`. For
+other commands, export it into your shell first:
 
 ```bash
 set -a && source .env && set +a
 ```
 
-For example, to initialize the schema without starting the server:
+Check whether the database needs migrations with:
 
 ```bash
-python -m valoreal.database
+python -m valoreal.database --env-file .env status
 ```
 
 ## Tests
@@ -187,14 +199,15 @@ scripts/swift-checks.sh
 
 ## PostgreSQL database
 
-PostgreSQL is the canonical development and runtime database. Starting the FastAPI
-application creates the current SQLAlchemy schema when the configured database is
-empty.
+PostgreSQL is the canonical development and runtime database. Its schema is
+managed by versioned Alembic migrations. [docs/DATABASE.md](docs/DATABASE.md)
+covers initializing an empty database, adopting a pre-migration installation,
+backups and recovery.
 
 Runtime startup never reads, copies, migrates, or deletes
-`valoreal/valorant_stats.db`. The historical SQLite migration code remains only for
-isolated compatibility tests and an explicit legacy migration entry point; SQLite
-is not a supported runtime backend.
+`valoreal/valorant_stats.db`. The historical SQLite migration code
+(`valoreal/database/legacy_sqlite.py`) remains only for isolated compatibility
+tests; SQLite is not a supported runtime backend.
 
 ### Repository data policy
 

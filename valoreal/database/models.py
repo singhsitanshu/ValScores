@@ -1,11 +1,25 @@
-"""Canonical SQLAlchemy schema for ValScores."""
+"""Canonical SQLAlchemy schema for ValScores.
+
+This must match the Alembic head revision in ``migrations/versions``;
+tests/test_migrations.py compares the two. Change both together.
+"""
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, Integer, String
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+)
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.types import TypeDecorator
 
+from ..domain.match_status import MATCH_STATUS_UPCOMING, MATCH_STATUSES
 from ..domain.time_contract import format_utc_timestamp, parse_utc_datetime
 
 
@@ -49,23 +63,45 @@ class UTCDateTime(TypeDecorator):
         return value.astimezone(timezone.utc)
 
 
+STATUS_CHECK_SQL = "status IN ({})".format(
+    ", ".join(f"'{status}'" for status in sorted(MATCH_STATUSES))
+)
+
+
 class Match(Base):
     __tablename__ = "matches"
-    __table_args__ = (Index("ix_matches_vlr_match_id", "vlr_match_id", unique=True),)
+    __table_args__ = (
+        Index("ix_matches_vlr_match_id", "vlr_match_id", unique=True),
+        # find_match_for_save also matches legacy "/<id>/<slug>" rows with LIKE;
+        # varchar_pattern_ops lets PostgreSQL use an index for that prefix search.
+        Index(
+            "ix_matches_vlr_match_id_pattern",
+            "vlr_match_id",
+            postgresql_ops={"vlr_match_id": "varchar_pattern_ops"},
+        ),
+        # Timeline: WHERE start_time >= ? AND start_time < ? ORDER BY start_time, id.
+        Index("ix_matches_start_time_id", "start_time", "id"),
+        CheckConstraint(STATUS_CHECK_SQL, name="ck_matches_status_known"),
+        CheckConstraint(
+            "team1_round_score >= 0 AND team2_round_score >= 0"
+            " AND team1_series_score >= 0 AND team2_series_score >= 0",
+            name="ck_matches_scores_non_negative",
+        ),
+    )
 
     id = Column(Integer, primary_key=True)
     vlr_match_id = Column(String, nullable=False)
     team1_name = Column(String, nullable=False)
     team2_name = Column(String, nullable=False)
     # Current-map round score while live. NULL means unknown, never 0-0.
-    team1_round_score = Column(String, nullable=True)
-    team2_round_score = Column(String, nullable=True)
+    team1_round_score = Column(Integer, nullable=True)
+    team2_round_score = Column(Integer, nullable=True)
     # PostgreSQL stores an instant (TIMESTAMP WITH TIME ZONE); Python sees an
     # aware datetime and the API serializes that value as UTC.
     start_time = Column(UTCDateTime(), nullable=True)
     # Preserves pre-contract values that cannot be interpreted safely.
     legacy_start_time = Column(String, nullable=True)
-    status = Column(String, nullable=True)
+    status = Column(String, nullable=False, default=MATCH_STATUS_UPCOMING)
     # NULL means the series has not started or no trustworthy score is known.
     team1_series_score = Column(Integer, nullable=True)
     team2_series_score = Column(Integer, nullable=True)
@@ -79,8 +115,13 @@ class Match(Base):
 class Game(Base):
     __tablename__ = "games"
     __table_args__ = (
+        # Also serves match-detail lookups by match_id (leading column).
         Index("uq_games_match_id_vlr_game_id", "match_id", "vlr_game_id", unique=True),
         Index("ix_games_vlr_game_id", "vlr_game_id"),
+        CheckConstraint(
+            "map_number >= 0 AND team1_round_score >= 0 AND team2_round_score >= 0",
+            name="ck_games_values_non_negative",
+        ),
     )
 
     id = Column(Integer, primary_key=True)
@@ -103,7 +144,8 @@ class PlayerStat(Base):
     __tablename__ = "player_stats"
     __table_args__ = (
         # No stable player ID is currently persisted. Team plus display name is
-        # therefore the strongest available player identity.
+        # therefore the strongest available player identity. The leading game_id
+        # also serves match-detail lookups.
         Index(
             "uq_player_stats_game_player_identity",
             "game_id",

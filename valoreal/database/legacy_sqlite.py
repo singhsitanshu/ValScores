@@ -1,4 +1,8 @@
-"""Small, repeatable SQLite schema migrations.
+"""Historical SQLite schema migrations, kept only for compatibility tests.
+
+These convert the pre-PostgreSQL SQLite database format. They are never imported
+by the API, the PostgreSQL migration command or deployment; PostgreSQL schema
+changes live in ``valoreal/database/migrations`` (Alembic).
 
 SQLite's ``user_version`` is the migration ledger. Each migration and its version
 update commit together, so an interrupted migration is safe to retry.

@@ -49,7 +49,7 @@ class DatabaseTimeContractTests(unittest.TestCase):
             run_isolated_backend(
                 database_path,
                 """
-                from valoreal.database.migrations import migrate_match_time_contract
+                from valoreal.database.legacy_sqlite import migrate_match_time_contract
 
                 # A second pass verifies that startup migration is idempotent.
                 migrate_match_time_contract()
@@ -78,10 +78,10 @@ class DatabaseTimeContractTests(unittest.TestCase):
 
                 from valoreal.api import routes
                 from valoreal.api.schemas import TimelineMatchResponse
-                from valoreal.database.connection import SessionLocal, initialize_database
-                from valoreal.database.models import Match
+                from valoreal.database.connection import SessionLocal, engine
+                from valoreal.database.models import Base, Match
 
-                initialize_database()
+                Base.metadata.create_all(engine)
 
                 session = SessionLocal()
                 session.add_all([
@@ -90,7 +90,7 @@ class DatabaseTimeContractTests(unittest.TestCase):
                         team1_name="Alpha",
                         team2_name="Bravo",
                         start_time=datetime(2026, 9, 6, 13, 0, tzinfo=timezone.utc),
-                        status="Upcoming",
+                        status="upcoming",
                     ),
                     Match(
                         vlr_match_id="/2",
@@ -98,7 +98,7 @@ class DatabaseTimeContractTests(unittest.TestCase):
                         team2_name="Delta",
                         start_time=None,
                         legacy_start_time="12:00 PM",
-                        status="Upcoming",
+                        status="upcoming",
                     ),
                 ])
                 session.commit()

@@ -13,12 +13,29 @@ from ..domain.match_status import (
 )
 from ..domain.time_contract import normalize_vlr_utc_timestamp
 from .errors import MatchDetailParseError
+from .page_checks import raise_if_error_page
 
 
 class MatchDetailParser:
-    def parse(self, html):
-        """Parse a frozen or fetched VLR match-detail page without doing I/O."""
+    """Parses one match page into a normalized details record.
+
+    Scores and counting stats are ints, ``k_d`` is a float, ``plus_minus`` is
+    signed text ("+7", "-2", "0") and ``kast`` is percent text ("78%"); any value
+    VLR does not show is None.
+    """
+
+    def parse(self, html, source_url=None):
+        """Parse a frozen or fetched VLR match-detail page without doing I/O.
+
+        Error pages raise VlrErrorPageError; pages without the match header raise
+        MatchDetailParseError rather than returning an empty record.
+        """
         soup = BeautifulSoup(html, 'html.parser')
+        raise_if_error_page(soup, "match page", source_url)
+        if soup.select_one('.match-header-vs') is None:
+            raise MatchDetailParseError(
+                "Unrecognized VLR match page: the .match-header-vs header is missing"
+            )
 
         match_data = {
             'map_vetoes': [],
@@ -80,6 +97,10 @@ class MatchDetailParser:
             nav_info = game_nav.get(game_id, {})
             header_info = self._extract_game_header(stats_container)
             map_name = nav_info.get('map_name') or header_info.get('map_name') or ("Overall" if game_id == "all" else "Map")
+            # VLR renders "0 - 0" placeholders for maps that have not been played.
+            unplayed = map_name.strip().upper() == "TBD" or match_data['status'] in {
+                MATCH_STATUS_UPCOMING, MATCH_STATUS_POSTPONED, MATCH_STATUS_CANCELLED,
+            }
             player_stats, player_warnings, row_state = self._extract_player_stats(stats_container)
             if row_state == 'absent':
                 player_warnings.append("no supported player-stat rows matched")
@@ -96,8 +117,8 @@ class MatchDetailParser:
                 'game_id': game_id,
                 'map_number': nav_info.get('map_number'),
                 'map_name': map_name,
-                'team1_round_score': header_info.get('team1_round_score'),
-                'team2_round_score': header_info.get('team2_round_score'),
+                'team1_round_score': None if unplayed else header_info.get('team1_round_score'),
+                'team2_round_score': None if unplayed else header_info.get('team2_round_score'),
                 'player_stats': player_stats
             }
             match_data['games'].append(game_data)
@@ -127,23 +148,19 @@ class MatchDetailParser:
         if not score_header:
             return {}
 
-        current_scores = score_header.select(
-            '.match-header-vs-score-winner, .match-header-vs-score-loser'
-        )
-        if len(current_scores) >= 2:
-            return {
-                'team1': current_scores[0].get_text(" ", strip=True),
-                'team2': current_scores[1].get_text(" ", strip=True)
-            }
-
-        legacy_scores = score_header.select('.js-spoiler')
-        if len(legacy_scores) >= 2:
-            return {
-                'team1': legacy_scores[0].get_text(" ", strip=True),
-                'team2': legacy_scores[1].get_text(" ", strip=True)
-            }
-
+        for selector in (
+            '.match-header-vs-score-winner, .match-header-vs-score-loser',
+            '.js-spoiler',  # legacy markup
+        ):
+            nodes = score_header.select(selector)
+            if len(nodes) >= 2:
+                team1, team2 = (self._score_int(node.get_text(" ", strip=True)) for node in nodes[:2])
+                return {'team1': team1, 'team2': team2} if None not in (team1, team2) else {}
         return {}
+
+    def _score_int(self, value):
+        text = (value or "").strip()
+        return int(text) if text.isdigit() else None
 
     def _extract_match_header_teams(self, soup):
         selectors = [
@@ -221,8 +238,8 @@ class MatchDetailParser:
 
         return {
             'map_name': map_name,
-            'team1_round_score': scores[0] if len(scores) > 0 else None,
-            'team2_round_score': scores[1] if len(scores) > 1 else None
+            'team1_round_score': self._score_int(scores[0]) if len(scores) > 0 else None,
+            'team2_round_score': self._score_int(scores[1]) if len(scores) > 1 else None
         }
 
     def _extract_player_stats(self, stats_container):
@@ -282,23 +299,22 @@ class MatchDetailParser:
                     f"player {player_name} is missing {', '.join(missing)}"
                 )
 
-            kills = self._numeric_text(raw_stats['kills'])
-            deaths = self._numeric_text(raw_stats['deaths'])
-            kd_ratio = self._kd_ratio_text(kills, deaths)
+            kills = self._stat_int(raw_stats['kills'])
+            deaths = self._stat_int(raw_stats['deaths'])
 
             player_stats.append({
                 'player': player_name,
                 'team': team_name,
-                'acs': self._numeric_text(raw_stats['acs']),
-                'k_d': kd_ratio,
-                'adr': self._numeric_text(raw_stats['adr']),
+                'acs': self._stat_int(raw_stats['acs']),
+                'k_d': self._kd_ratio(kills, deaths),
+                'adr': self._stat_int(raw_stats['adr']),
                 'kills': kills,
                 'deaths': deaths,
-                'assists': self._numeric_text(raw_stats['assists']),
+                'assists': self._stat_int(raw_stats['assists']),
                 'plus_minus': self._signed_stat_text(raw_stats['plus_minus']),
                 'kast': self._percent_text(raw_stats['kast']),
-                'first_kills': self._numeric_text(raw_stats['first_kills']),
-                'first_deaths': self._numeric_text(raw_stats['first_deaths'])
+                'first_kills': self._stat_int(raw_stats['first_kills']),
+                'first_deaths': self._stat_int(raw_stats['first_deaths'])
             })
 
         teams = {player['team'] for player in player_stats}
@@ -327,13 +343,16 @@ class MatchDetailParser:
 
     # Missing or blank stat cells parse to None so an unavailable value is
     # never confused with a recorded zero.
-    def _numeric_text(self, value):
+    def _stat_int(self, value):
         match = re.search(r'-?\d+', value or "")
-        return match.group(0) if match else None
+        return int(match.group(0)) if match else None
 
     def _signed_stat_text(self, value):
         match = re.search(r'[+-]?\d+', value or "")
-        return match.group(0) if match else None
+        if not match:
+            return None
+        number = int(match.group(0))
+        return f"+{number}" if number > 0 else str(number)
 
     def _percent_text(self, value):
         match = re.search(r'-?\d+(?:\.\d+)?%?', value or "")
@@ -342,12 +361,10 @@ class MatchDetailParser:
         parsed = match.group(0)
         return parsed if parsed.endswith('%') else f"{parsed}%"
 
-    def _kd_ratio_text(self, kills, deaths):
+    def _kd_ratio(self, kills, deaths):
         if kills is None or deaths is None:
             return None
-        if int(deaths) > 0:
-            return str(round(int(kills) / int(deaths), 2))
-        return kills
+        return round(kills / deaths, 2) if deaths > 0 else float(kills)
 
     def _extract_legacy_player_stats(self, stats_container):
         player_stats = []
@@ -366,13 +383,13 @@ class MatchDetailParser:
             kills = self._stat_value(cols, 4)
             deaths = self._stat_value(cols, 5)
             assists = self._stat_value(cols, 6)
-            plus_minus = self._stat_text(cols, 7)
-            kast = self._stat_text(cols, 8)
+            plus_minus = self._signed_stat_text(self._stat_text(cols, 7))
+            kast = self._percent_text(self._stat_text(cols, 8))
             adr = self._stat_value(cols, 9)
             first_kills = self._stat_value(cols, 11)
             first_deaths = self._stat_value(cols, 12)
 
-            kd_ratio = self._kd_ratio_text(kills, deaths)
+            kd_ratio = self._kd_ratio(kills, deaths)
 
             player_stats.append({
                 'player': player_name_tag.text.strip(),
@@ -392,7 +409,7 @@ class MatchDetailParser:
         return player_stats
 
     def _stat_value(self, cols, index):
-        return self._numeric_text(self._stat_text(cols, index))
+        return self._stat_int(self._stat_text(cols, index))
 
     def _stat_text(self, cols, index):
         if len(cols) <= index:

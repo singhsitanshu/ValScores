@@ -16,7 +16,8 @@ valoreal/                  Python backend package (uvicorn valoreal.api:app)
     time_contract.py         UTC timestamp parsing and normalization
     normalization.py         team, score and match-ID normalization
   scraper/                 VLR access; never touches the database
-    client.py                HTTP fetching (the only network I/O)
+    client.py                HTTP fetching (the only network I/O): retries, rate limit
+    page_checks.py           error/bot-check page detection
     match_list.py            schedule/results page parser
     match_details.py         match page parser
     vlr_scraper.py           VlrScraper facade: client + parsers
@@ -99,6 +100,50 @@ python -m uvicorn valoreal.api:app --reload --env-file .env   # serve the API
 python -m valoreal.database --env-file .env upgrade           # apply migrations
 python -m valoreal.services.refresh                           # one refresh from the shell
 ```
+
+## Scraper behavior
+
+**Fetching** (`scraper/client.py`). Every request goes through
+`VlrHttpClient.fetch_html`:
+
+| Concern | Behavior |
+| --- | --- |
+| Connections | One `requests.Session` per scraper, so connections are reused. |
+| Timeouts | 5 s to connect, 20 s to read (`DEFAULT_HTTP_TIMEOUT`). |
+| Identity | `User-Agent: ValScores/1.0 (+https://github.com/singhsitanshu/ValScores)`. |
+| Rate | At least 1 s between requests (`DEFAULT_MIN_INTERVAL`). |
+| Retries | Up to 3 attempts for timeouts, connection errors and HTTP 429/500/502/503/504, waiting 1 s then 2 s (capped at 10 s). |
+| `Retry-After` | Honored (seconds or HTTP date) up to 60 s; a longer request fails immediately instead of stalling a refresh. |
+| Never retried | Other 4xx responses, invalid requests, and every parse error. |
+
+Failures raise `VlrUpstreamError` with `url`, `status_code` and `attempts`.
+
+**Parsing** (`match_list.py`, `match_details.py`) is pure: HTML in, records
+out, with no network or database access. Each page is classified before
+records are extracted:
+
+| Page | Result |
+| --- | --- |
+| CDN or VLR error page / bot check served with HTTP 200 | `VlrErrorPageError` (a `VlrUpstreamError`) |
+| List page without the `div.col.mod-1` match column, or with match links in unfamiliar markup | `MatchListParseError` |
+| Match page without the `.match-header-vs` header | `MatchDetailParseError` |
+| Recognized list page with no matches | `[]`, the only successful empty result |
+
+Within a list page, a card missing identity data (match link, either team name)
+is skipped and reported in `last_list_parse_failures`. If every card is skipped,
+the page fails. A card whose optional fields cannot be read (status, time, scores)
+is kept and reported in `last_list_parse_warnings`. Both carry the page `url`,
+`card_index` and `href`. Refresh results include skipped cards but not yet these
+warnings (see A6 in [OVERHAUL-01-baseline.md](OVERHAUL-01-baseline.md)).
+
+**Records** follow the [API contract](API-CONTRACT.md):
+
+- match IDs are canonical (`/<id>`);
+- statuses are one of the five contract values;
+- times are ISO-8601 UTC;
+- scores and counting stats are `int`, and `k_d` is a `float`;
+- `plus_minus` is signed text (`"+7"`) and `kast` is percent text (`"78%"`);
+- anything VLR does not show is `None`, including the `0 - 0` placeholders of unplayed maps.
 
 ## App dependency direction
 

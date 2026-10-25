@@ -7,48 +7,86 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
-from ..domain.match_status import MATCH_STATUS_LIVE, normalize_match_status
+from ..domain.match_status import (
+    MATCH_STATUS_LIVE,
+    MATCH_STATUS_UPCOMING,
+    normalize_match_status,
+)
 from ..domain.time_contract import parse_vlr_schedule_timestamp
 from .client import VLR_BASE_URL
 from .errors import MatchCardParseError, MatchListParseError, MatchListParseWarning
+from .page_checks import raise_if_error_page
 
 
 logger = logging.getLogger(__name__)
 
 
 class MatchListParser:
+    """Parses one list page into match records.
+
+    After each ``parse``, ``last_failures`` lists cards that were skipped because
+    required identity data was missing, and ``last_warnings`` lists cards that
+    were kept although an optional field could not be read. Both entries carry
+    the page ``url``, ``card_index`` and ``href`` for context.
+    """
+
     def __init__(self, base_url=VLR_BASE_URL):
         self.base_url = base_url
         self.last_failures = ()
+        self.last_warnings = ()
 
-    def parse(self, html, status_override=None):
-        """Parse a frozen or fetched VLR list page without performing I/O."""
+    def parse(self, html, status_override=None, source_url=None):
+        """Parse a frozen or fetched VLR list page without performing I/O.
+
+        Returns [] only for a recognized page that lists no matches. Error pages
+        raise VlrErrorPageError; unrecognized layouts raise MatchListParseError.
+        """
+        self.last_failures = ()
+        self.last_warnings = ()
         soup = BeautifulSoup(html, 'html.parser')
-        matches = []
-        match_cards = self._match_cards_with_dates(soup)
-        if not match_cards:
-            self.last_failures = ()
-            raise MatchListParseError("VLR list page contains no match cards")
+        raise_if_error_page(soup, "match list", source_url)
 
-        failures = []
-        for card_index, (card, schedule_date) in enumerate(match_cards, start=1):
-            try:
-                matches.append(
-                    self._parse_match_card(card, schedule_date, status_override)
+        main_column = soup.select_one("div.col.mod-1")
+        if main_column is None:
+            raise MatchListParseError(
+                "Unrecognized VLR list page: the div.col.mod-1 match column is missing"
+            )
+        match_cards = self._match_cards_with_dates(main_column)
+        if not match_cards:
+            if any(self._canonical_id_from_href(link.get('href') or "")
+                   for link in main_column.find_all('a')):
+                raise MatchListParseError(
+                    "Unrecognized VLR list page: match links are present but none "
+                    "use the a.match-item card markup"
                 )
+            return []
+
+        matches = []
+        failures = []
+        card_warnings = []
+        for card_index, (card, schedule_date) in enumerate(match_cards, start=1):
+            href = card.get('href') or "<missing href>"
+            context = {'url': source_url, 'card_index': card_index, 'href': href}
+            try:
+                record, problems = self._parse_match_card(card, schedule_date, status_override)
             except MatchCardParseError as exc:
-                href = card.get('href') or "<missing href>"
-                failure = {
-                    'card_index': card_index,
-                    'href': href,
-                    'error': str(exc),
-                }
-                failures.append(failure)
+                failures.append({**context, 'error': str(exc)})
                 message = f"Skipped malformed VLR match card {card_index} ({href}): {exc}"
                 logger.warning(message)
                 warnings.warn(message, MatchListParseWarning, stacklevel=2)
+                continue
+            matches.append(record)
+            for field, message in problems:
+                card_warnings.append({
+                    **context,
+                    'vlr_match_id': record['vlr_match_id'],
+                    'field': field,
+                    'message': message,
+                })
+                logger.info("VLR card %d (%s): %s", card_index, href, message)
 
         self.last_failures = tuple(failures)
+        self.last_warnings = tuple(card_warnings)
         if not matches:
             raise MatchListParseError(
                 f"All {len(match_cards)} VLR match cards were malformed"
@@ -56,6 +94,12 @@ class MatchListParser:
         return matches
 
     def _parse_match_card(self, card, schedule_date, status_override=None):
+        """Return (record, [(field, message), ...]) or raise MatchCardParseError.
+
+        Identity data (match link, both team names) is required. Status, time and
+        scores are optional: when unreadable the record is kept with a warning.
+        """
+        problems = []
         href = (card.get('href') or "").strip()
         match_id = self._canonical_id_from_href(href)
         if match_id is None:
@@ -81,21 +125,24 @@ class MatchListParser:
         status_text = status_node.get_text(" ", strip=True) if status_node else None
         status = normalize_match_status(status_override or status_text)
         if status is None:
-            raise MatchCardParseError(
-                f"missing or unsupported match status: {status_text!r}"
-            )
+            status = MATCH_STATUS_UPCOMING
+            problems.append((
+                "status",
+                f"missing or unsupported status {status_text!r}; recorded as upcoming",
+            ))
 
         time_node = card.select_one('.match-item-time')
         match_time = time_node.get_text(" ", strip=True) if time_node else None
         match_time = match_time or None
         scheduled_time = self._combine_date_and_time(schedule_date, match_time)
         if match_time and match_time.upper() != "TBD" and scheduled_time is None:
-            raise MatchCardParseError(
-                f"could not parse schedule heading/time: {schedule_date!r} / {match_time!r}"
-            )
+            problems.append((
+                "scheduled_time",
+                f"could not parse schedule heading/time {schedule_date!r} / {match_time!r}",
+            ))
 
         match_url = urljoin(f"{self.base_url}/", href)
-        return {
+        record = {
             'vlr_match_id': match_id,
             'team1': team_names[0],
             'team2': team_names[1],
@@ -111,6 +158,7 @@ class MatchListParser:
             'team2_round_score': None,
             'url': match_url,
         }
+        return record, problems
 
     def _canonical_id_from_href(self, href):
         parsed_url = urlparse(urljoin(f"{self.base_url}/", href))
@@ -124,16 +172,11 @@ class MatchListParser:
         if score_node is None:
             return None
         score = score_node.get_text(" ", strip=True)
-        return score if re.fullmatch(r"\d+", score) else None
+        return int(score) if re.fullmatch(r"\d+", score) else None
 
-    def _match_cards_with_dates(self, soup):
+    def _match_cards_with_dates(self, main_column):
         cards = []
         current_date = None
-        main_column = soup.select_one("div.col.mod-1")
-
-        if not main_column:
-            return [(card, None) for card in soup.find_all('a', class_='match-item')]
-
         for child in main_column.children:
             if getattr(child, "name", None) != "div":
                 continue

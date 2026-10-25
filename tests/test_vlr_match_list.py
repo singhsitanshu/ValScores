@@ -1,3 +1,5 @@
+import contextlib
+from datetime import datetime, timezone
 from pathlib import Path
 import unittest
 import warnings
@@ -8,10 +10,16 @@ from valoreal.domain.match_status import MATCH_STATUSES
 from valoreal.scraper import (
     MatchListParseError,
     MatchListParseWarning,
+    VlrErrorPageError,
     VlrScraper,
     VlrUpstreamError,
 )
-from valoreal.scraper.client import DEFAULT_HTTP_TIMEOUT
+from valoreal.scraper.client import (
+    DEFAULT_HTTP_TIMEOUT,
+    DEFAULT_MIN_INTERVAL,
+    VlrHttpClient,
+    retry_after_seconds,
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -22,26 +30,47 @@ def fixture(name):
 
 
 class FakeResponse:
-    def __init__(self, text, error=None):
+    def __init__(self, text="", status_code=200, headers=None):
         self.text = text
-        self.error = error
-
-    def raise_for_status(self):
-        if self.error:
-            raise self.error
+        self.status_code = status_code
+        self.headers = headers or {}
 
 
 class FakeSession:
-    def __init__(self, response=None, error=None):
-        self.response = response
-        self.error = error
+    """Returns (or raises) scripted outcomes in order and records each call."""
+
+    def __init__(self, *outcomes):
+        self.outcomes = list(outcomes)
         self.calls = []
 
     def get(self, url, **kwargs):
         self.calls.append((url, kwargs))
-        if self.error:
-            raise self.error
-        return self.response
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+class FakeClock:
+    """Monotonic clock that only advances when the client sleeps."""
+
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+def scraper_with(*outcomes):
+    clock = FakeClock()
+    session = FakeSession(*outcomes)
+    client = VlrHttpClient(session=session, clock=clock, sleep=clock.sleep)
+    return VlrScraper(client=client), session, clock
 
 
 class VlrMatchListTests(unittest.TestCase):
@@ -72,7 +101,7 @@ class VlrMatchListTests(unittest.TestCase):
 
         self.assertEqual(match["status"], "live")
         self.assertTrue(match["is_live"])
-        self.assertEqual((match["team1_score"], match["team2_score"]), ("1", "0"))
+        self.assertEqual((match["team1_score"], match["team2_score"]), (1, 0))
         self.assertEqual(match["scheduled_time"], "2026-09-07T16:30:00Z")
         self.assertIsNone(match["team1_round_score"])
         self.assertIsNone(match["team2_round_score"])
@@ -85,7 +114,7 @@ class VlrMatchListTests(unittest.TestCase):
 
         self.assertEqual(match["vlr_match_id"], "/734308")
         self.assertEqual(match["status"], "finished")
-        self.assertEqual((match["team1_score"], match["team2_score"]), ("3", "2"))
+        self.assertEqual((match["team1_score"], match["team2_score"]), (3, 2))
         self.assertEqual(match["scheduled_time"], "2026-09-06T17:00:00Z")
 
     def test_tbd_team_is_valid_identity_data(self):
@@ -119,9 +148,35 @@ class VlrMatchListTests(unittest.TestCase):
         )
         self.assertIn("expected two team containers", " ".join(logged.output))
 
-    def test_no_match_cards_is_a_total_parse_failure(self):
-        with self.assertRaisesRegex(MatchListParseError, "no match cards"):
+    def test_empty_error_and_unrecognized_pages_are_distinguished(self):
+        self.assertEqual(self.parse("vlr_list_empty.html"), [])
+        cases = [
+            ("vlr_error_challenge.html", VlrErrorPageError, "bot-check page"),
+            ("vlr_list_redesigned.html", MatchListParseError, "none use the a.match-item card markup"),
+        ]
+        for name, error, message in cases:
+            with self.subTest(name):
+                with self.assertRaisesRegex(error, message):
+                    self.parse(name)
+        with self.assertRaisesRegex(MatchListParseError, "match column is missing"):
             self.scraper.parse_match_list("<html><body>maintenance</body></html>")
+
+    def test_cards_with_unreadable_optional_fields_are_kept_with_warnings(self):
+        url = "https://www.vlr.gg/matches"
+        postponed, garbled, live = self.parse("vlr_list_incomplete_cards.html", source_url=url)
+
+        self.assertEqual((postponed["status"], postponed["time"], postponed["team1_score"]),
+                         ("postponed", None, None))
+        self.assertEqual((garbled["status"], garbled["scheduled_time"], garbled["team1_score"]),
+                         ("upcoming", None, None))
+        # A genuine 0-0 live score is kept as integers, not treated as missing.
+        self.assertEqual((live["status"], live["team1_score"], live["team2_score"]), ("live", 0, 0))
+        self.assertEqual(self.scraper.last_list_parse_failures, ())
+        self.assertEqual(
+            [(w["url"], w["card_index"], w["vlr_match_id"], w["field"])
+             for w in self.scraper.last_list_parse_warnings],
+            [(url, 2, "/700031", "status"), (url, 2, "/700031", "scheduled_time")],
+        )
 
     def test_all_malformed_cards_is_a_total_parse_failure(self):
         only_malformed = fixture("vlr_list_malformed_optional.html").replace(
@@ -166,57 +221,75 @@ class VlrMatchListTests(unittest.TestCase):
 
 
 class VlrHttpTests(unittest.TestCase):
-    def test_list_fetch_uses_central_timeout_headers_and_status_validation(self):
-        response = FakeResponse(fixture("vlr_list_upcoming.html"))
-        session = FakeSession(response=response)
-        scraper = VlrScraper(session=session)
+    def test_requests_share_one_session_with_timeouts_user_agent_and_spacing(self):
+        scraper, session, clock = scraper_with(
+            FakeResponse(fixture("vlr_list_upcoming.html")),
+            FakeResponse(fixture("vlr_list_completed_result.html")),
+        )
 
-        matches = scraper.get_matches()
+        self.assertEqual(len(scraper.get_matches()), 1)
+        self.assertEqual(scraper.get_results()[0]["status"], "finished")
+
+        self.assertEqual([url for url, _ in session.calls],
+                         ["https://www.vlr.gg/matches", "https://www.vlr.gg/matches/results"])
+        for _, kwargs in session.calls:
+            self.assertEqual(kwargs["timeout"], DEFAULT_HTTP_TIMEOUT)
+            self.assertIn("ValScores", kwargs["headers"]["User-Agent"])
+        # The second request waited out the minimum interval.
+        self.assertEqual(clock.sleeps, [DEFAULT_MIN_INTERVAL])
+
+    def test_transient_failures_retry_with_exponential_backoff(self):
+        scraper, session, clock = scraper_with(
+            requests.Timeout("read timed out"),
+            FakeResponse("busy", status_code=503),
+            FakeResponse(fixture("vlr_list_upcoming.html")),
+        )
+        with self.assertLogs("valoreal.scraper.client", level="WARNING"):
+            matches = scraper.get_matches()
 
         self.assertEqual(len(matches), 1)
-        self.assertEqual(len(session.calls), 1)
-        url, kwargs = session.calls[0]
-        self.assertEqual(url, "https://www.vlr.gg/matches")
-        self.assertEqual(kwargs["timeout"], DEFAULT_HTTP_TIMEOUT)
-        self.assertIn("ValScores", kwargs["headers"]["User-Agent"])
+        self.assertEqual(len(session.calls), 3)
+        self.assertEqual(clock.sleeps, [1.0, 2.0])
 
-    def test_results_fetch_applies_finished_override(self):
-        session = FakeSession(
-            response=FakeResponse(fixture("vlr_list_completed_result.html"))
+    def test_retries_stop_at_the_limit_and_never_repeat_permanent_failures(self):
+        cases = [
+            ("retryable status", [FakeResponse(status_code=503)] * 3, VlrUpstreamError, 3, 503),
+            ("transport error", [requests.ConnectionError("refused")] * 3, VlrUpstreamError, 3, None),
+            ("not found", [FakeResponse(status_code=404)], VlrUpstreamError, 1, 404),
+            ("parse error", [FakeResponse("<html><body>maintenance</body></html>")],
+             MatchListParseError, 1, None),
+        ]
+        for name, outcomes, error, calls, status_code in cases:
+            with self.subTest(name):
+                scraper, session, _clock = scraper_with(*outcomes)
+                with self.assertLogs("valoreal.scraper.client", level="WARNING") if calls > 1 \
+                        else contextlib.nullcontext():
+                    with self.assertRaises(error) as raised:
+                        scraper.get_matches()
+                self.assertEqual(len(session.calls), calls)
+                if error is VlrUpstreamError:
+                    self.assertEqual(raised.exception.attempts, calls)
+                    self.assertEqual(raised.exception.status_code, status_code)
+
+    def test_retry_after_is_honored_within_a_limit(self):
+        scraper, session, clock = scraper_with(
+            FakeResponse(status_code=429, headers={"Retry-After": "5"}),
+            FakeResponse(fixture("vlr_list_upcoming.html")),
         )
-        matches = VlrScraper(session=session).get_results()
-        self.assertEqual(matches[0]["status"], "finished")
+        with self.assertLogs("valoreal.scraper.client", level="WARNING"):
+            scraper.get_matches()
+        self.assertEqual(clock.sleeps, [5.0])
 
-    def test_404_429_and_500_failures_are_wrapped_and_propagated(self):
-        for status_code, reason in (
-            (404, "Not Found"),
-            (429, "Too Many Requests"),
-            (500, "Server Error"),
-        ):
-            with self.subTest(status_code=status_code):
-                error = requests.HTTPError(f"{status_code} {reason}")
-                session = FakeSession(
-                    response=FakeResponse("upstream failure", error=error)
-                )
-
-                with self.assertRaisesRegex(VlrUpstreamError, str(status_code)):
-                    VlrScraper(session=session).get_matches()
-
-    def test_transport_failure_is_wrapped_and_propagated(self):
-        session = FakeSession(error=requests.Timeout("read timed out"))
-
-        with self.assertRaisesRegex(VlrUpstreamError, "read timed out"):
-            VlrScraper(session=session).get_matches()
-
-    def test_malformed_fetched_html_is_rejected_without_network_access(self):
-        session = FakeSession(
-            response=FakeResponse("<html><body>maintenance</body></html>")
+        scraper, session, clock = scraper_with(
+            FakeResponse(status_code=429, headers={"Retry-After": "600"})
         )
+        with self.assertRaisesRegex(VlrUpstreamError, "retry after 600s"):
+            scraper.get_matches()
+        self.assertEqual((len(session.calls), clock.sleeps), (1, []))
 
-        with self.assertRaisesRegex(MatchListParseError, "no match cards"):
-            VlrScraper(session=session).get_matches()
-
-        self.assertEqual(len(session.calls), 1)
+        http_date = FakeResponse(headers={"Retry-After": "Sun, 25 Oct 2026 12:00:30 GMT"})
+        now = datetime(2026, 10, 25, 12, 0, 0, tzinfo=timezone.utc)
+        self.assertEqual(retry_after_seconds(http_date, now=now), 30.0)
 
 
 if __name__ == "__main__":
